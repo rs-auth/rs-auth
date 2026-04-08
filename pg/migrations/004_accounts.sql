@@ -1,0 +1,1 @@
+-- accounts table placeholder

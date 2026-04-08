@@ -1,0 +1,12 @@
+[package]
+name = "basic"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+rs-auth = { path = "../../auth" }
+axum-lib = { workspace = true, features = ["tokio", "http1"] }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+tracing-subscriber = "0.3"

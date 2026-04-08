@@ -1,0 +1,1 @@
+-- sessions table placeholder

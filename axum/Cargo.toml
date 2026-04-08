@@ -1,0 +1,24 @@
+[package]
+name = "rs-auth-axum"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+rs-auth-core = { workspace = true }
+axum-lib = { workspace = true, features = ["macros"] }
+tower = { workspace = true }
+tower-layer = { workspace = true }
+tower-service = { workspace = true }
+tower-sessions = { workspace = true, features = ["axum-core"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

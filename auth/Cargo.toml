@@ -1,0 +1,24 @@
+[package]
+name = "rs-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+rs-auth-core = { workspace = true }
+rs-auth-postgres = { workspace = true, optional = true }
+rs-auth-axum = { workspace = true, optional = true }
+
+[features]
+default = ["postgres", "axum"]
+postgres = ["dep:rs-auth-postgres"]
+axum = ["dep:rs-auth-axum"]
+
+[lints]
+workspace = true

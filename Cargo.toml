@@ -1,0 +1,41 @@
+[workspace]
+members = ["auth", "core", "pg", "axum", "examples/basic"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["rs-auth contributors"]
+repository = "https://github.com/rs-auth/rs-auth"
+homepage = "https://github.com/rs-auth/rs-auth"
+keywords = ["authentication", "auth", "axum", "session", "sqlx"]
+categories = ["web-programming::http-server", "authentication"]
+
+[workspace.dependencies]
+rs-auth-core = { path = "core", version = "0.1.0" }
+rs-auth-postgres = { path = "pg", version = "0.1.0" }
+rs-auth-axum = { path = "axum", version = "0.1.0" }
+
+tokio = { version = "1", default-features = false }
+axum-lib = { package = "axum", version = "0.8", default-features = false }
+tower = { version = "0.5", default-features = false }
+tower-layer = "0.3"
+tower-service = "0.3"
+tower-sessions = { version = "0.15", default-features = false }
+sqlx = { version = "0.8", default-features = false }
+argon2 = { version = "0.5", features = ["std"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+time = { version = "0.3", features = ["serde"] }
+tracing = "0.1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+todo = "warn"
