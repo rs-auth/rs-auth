@@ -1,5 +1,6 @@
 [package]
 name = "rs-auth-core"
+description = "Core types, crypto, and domain logic for rs-auth."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +10,7 @@ repository.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
+readme.workspace = true
 
 [dependencies]
 argon2 = { workspace = true }

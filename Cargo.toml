@@ -12,6 +12,7 @@ repository = "https://github.com/rs-auth/rs-auth"
 homepage = "https://github.com/rs-auth/rs-auth"
 keywords = ["authentication", "auth", "axum", "session", "sqlx"]
 categories = ["web-programming::http-server", "authentication"]
+readme = "README.md"
 
 [workspace.dependencies]
 rs-auth-core = { path = "core", version = "0.1.0" }
