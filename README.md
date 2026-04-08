@@ -12,3 +12,7 @@ Composable authentication for Rust with Axum and Postgres.
 ## Status
 
 Early scaffold. The workspace layout and crate boundaries are in place.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
