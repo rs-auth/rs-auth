@@ -14,10 +14,20 @@ readme.workspace = true
 
 [dependencies]
 argon2 = { workspace = true }
+async-trait = { workspace = true }
+hex = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+oauth2 = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true
