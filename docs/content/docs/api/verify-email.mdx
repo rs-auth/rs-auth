@@ -1,0 +1,19 @@
+---
+title: Verify Email
+description: Verify an email address with a token.
+---
+
+<Endpoint method="GET" path="/auth/verify/:token">
+  Consume a verification token and mark the user as verified.
+</Endpoint>
+
+This endpoint consumes a verification token and marks the user as verified.
+
+Depending on configuration, verification can also create a session automatically.
+
+Typical flow:
+
+1. user signs up
+2. app sends verification email using the configured email sender
+3. user opens the verification link
+4. the token is consumed and the user becomes verified

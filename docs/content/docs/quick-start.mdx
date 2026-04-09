@@ -1,0 +1,65 @@
+---
+title: Quick Start
+description: Build your first authenticated Axum application with rs-auth.
+---
+
+# Quick Start
+
+This guide shows the intended shape of a minimal `rs-auth` integration with Axum and Postgres.
+
+## Setup
+
+First, finish the [Installation](/docs/installation) steps and make sure your database is reachable.
+
+## Add the auth router
+
+Create your application state, then mount the prebuilt auth router:
+
+```rust title="src/main.rs"
+use axum::Router;
+use rs_auth::axum::{auth_router, AuthState};
+
+let auth = auth_router(state);
+
+let app = Router::new().nest("/auth", auth);
+```
+
+## What this gives you
+
+With the current Phase 1 and Phase 2 implementation, the router exposes:
+
+- email/password signup
+- login/logout
+- email verification
+- password reset
+- current session lookup
+- session listing
+- Google and GitHub OAuth flows
+
+## How sessions work
+
+When a user logs in:
+
+1. rs-auth generates a cryptographically random session token
+2. the token is hashed with SHA-256 and stored in Postgres
+3. the raw token is written into a signed cookie by the Axum integration
+4. future requests resolve the user by reading and validating that cookie
+
+This gives you:
+
+- opaque session tokens instead of JWTs
+- server-side revocation
+- session introspection and listing
+- safer defaults for Rust web apps
+
+<Callout title="Current scope" tone="info">
+  The current public implementation is intentionally focused on Axum and
+  Postgres so the first release stays cohesive.
+</Callout>
+
+## Suggested next reads
+
+- [Sessions](/docs/concepts/sessions)
+- [Email Verification](/docs/concepts/email-verification)
+- [AuthConfig](/docs/configuration/auth-config)
+- [Google OAuth](/docs/oauth/google)

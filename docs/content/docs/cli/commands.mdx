@@ -1,0 +1,18 @@
+---
+title: Commands
+description: The rs-auth CLI for migrations and maintenance.
+---
+
+Current commands:
+
+```bash title="Terminal"
+rs-auth-cli migrate --database-url <DATABASE_URL>
+rs-auth-cli generate <name>
+rs-auth-cli cleanup --database-url <DATABASE_URL>
+```
+
+What they do:
+
+- `migrate`: apply embedded Postgres migrations
+- `generate`: create a new SQL migration file
+- `cleanup`: delete expired sessions and verification records

@@ -1,0 +1,182 @@
+---
+title: Sessions
+description: Understanding session management in rs-auth
+---
+
+# Sessions
+
+rs-auth uses database-backed sessions with signed cookies to manage authentication state. This approach provides a balance of security, performance, and simplicity.
+
+## How Sessions Work
+
+When a user successfully authenticates (via login or signup), rs-auth creates a session:
+
+### 1. Token Generation
+
+```rust title="core/session.rs"
+// Generate a cryptographically random token
+let token = generate_session_token(); // 32 random bytes, base64-encoded
+```
+
+The session token is:
+- 32 bytes of cryptographically random data
+- Base64-encoded for transport
+- Unique across all sessions
+
+### 2. Database Storage
+
+```rust title="core/session.rs"
+// Hash the token before storing
+let token_hash = sha256(&token);
+
+// Store in database
+INSERT INTO sessions (user_id, token_hash, expires_at)
+VALUES ($1, $2, $3)
+```
+
+The token is hashed with SHA-256 before storage. This means:
+- If the database is compromised, tokens cannot be used
+- Sessions can be invalidated by deleting the database record
+- Token verification requires a database lookup
+
+### 3. Cookie Transport
+
+```rust title="axum/middleware.rs"
+// Sign the token and send as cookie
+let signed_cookie = sign_cookie("session", &token, &secret);
+// Set-Cookie: session=<signed-token>; HttpOnly; Secure; SameSite=Lax
+```
+
+The cookie is:
+- **HttpOnly**: Not accessible to JavaScript
+- **Secure**: Only sent over HTTPS (in production)
+- **SameSite=Lax**: CSRF protection
+- **Signed**: Tamper-proof with HMAC
+
+## Session Lifecycle
+
+### Creation
+
+Sessions are created on successful signup, login, or OAuth callback:
+
+```rust title="src/handler.rs"
+let session = auth_state.create_session(user_id).await?;
+```
+
+### Validation
+
+On each request, the `Session` extractor:
+
+```rust title="src/handler.rs"
+// Using the Session extractor
+async fn protected_route(session: Session) -> String {
+    // Session is automatically validated
+    format!("User ID: {}", session.user_id)
+}
+```
+
+### Expiration
+
+Sessions expire after a configurable duration (default: 30 days):
+
+```rust title="src/main.rs"
+let auth_config = AuthConfig::builder()
+    .session_duration(Duration::days(30))
+    .build();
+```
+
+### Invalidation
+
+```rust title="src/handler.rs"
+// Logout (invalidates current session)
+auth_state.logout(&session_token).await?;
+
+// Logout all sessions for a user
+auth_state.logout_all_sessions(user_id).await?;
+```
+
+## Session Storage
+
+Sessions are stored in PostgreSQL:
+
+```sql title="migrations/sessions.sql"
+CREATE TABLE sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+## Using Sessions in Handlers
+
+### Session Extractor
+
+```rust title="src/handler.rs"
+use rs_auth::extractors::Session;
+
+async fn get_profile(session: Session) -> Json<Profile> {
+    let user = get_user(session.user_id).await?;
+    Json(Profile { user })
+}
+```
+
+### Optional Session
+
+For routes that work with or without authentication:
+
+```rust title="src/handler.rs"
+use rs_auth::extractors::OptionalSession;
+
+async fn get_content(session: OptionalSession) -> Json<Content> {
+    let content = if let Some(session) = session.0 {
+        get_personalized_content(session.user_id).await?
+    } else {
+        get_public_content().await?
+    };
+    Json(content)
+}
+```
+
+## Best Practices
+
+### Cookie Secret
+
+Always use a strong cookie secret:
+
+```rust title="src/main.rs"
+// ❌ Bad
+.cookie_secret("secret")
+
+// ✅ Good
+.cookie_secret(&std::env::var("COOKIE_SECRET")?)
+```
+
+Generate a secure secret:
+
+```bash title="Terminal"
+openssl rand -base64 32
+```
+
+### Session Duration
+
+```rust title="src/main.rs"
+// Short-lived (1 day) - High security
+.session_duration(Duration::days(1))
+
+// Medium (7 days) - Balanced
+.session_duration(Duration::days(7))
+
+// Long-lived (30 days) - Convenience
+.session_duration(Duration::days(30))
+```
+
+### HTTPS in Production
+
+```rust title="src/main.rs"
+let auth_config = AuthConfig::builder()
+    .cookie_secure(true) // Requires HTTPS
+    .build();
+```

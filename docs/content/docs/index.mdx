@@ -1,0 +1,55 @@
+---
+title: Introduction
+description: Composable authentication for Rust with Axum and Postgres
+---
+
+# Introduction
+
+**rs-auth** is a composable authentication library for Rust, built around Axum and PostgreSQL. It provides production-ready authentication flows with a focus on simplicity, security, and developer experience.
+
+## What is rs-auth?
+
+rs-auth is designed to be the Rust equivalent of modern authentication libraries like Better Auth. It handles the complex parts of authentication while giving you full control over your application's auth logic.
+
+### Current Scope
+
+rs-auth currently provides:
+
+- **Email/Password Authentication**: Signup, login, logout with secure password hashing
+- **Session Management**: Database-backed sessions with signed cookies
+- **Email Verification**: Optional email verification flows
+- **Password Reset**: Secure password reset with time-limited tokens
+- **OAuth Support**: Google and GitHub OAuth providers (experimental)
+- **Axum Integration**: First-class Axum support with extractors and middleware
+
+## Architecture
+
+rs-auth is built with a layered architecture:
+
+1. **Core Layer**: Authentication logic, password hashing, token generation
+2. **Database Layer**: PostgreSQL persistence with SQLx
+3. **Web Layer**: Axum handlers, extractors, and middleware
+4. **OAuth Layer**: Provider integrations and account linking
+
+### Session Security
+
+Sessions in rs-auth use:
+
+- Opaque session tokens (cryptographically random)
+- SHA-256 hashing in the database
+- Signed cookies for transport
+- Automatic session rotation on sensitive operations
+
+## Getting Started
+
+Ready to add authentication to your Rust application?
+
+- [Installation](/docs/installation) - Add rs-auth to your project
+- [Quick Start](/docs/quick-start) - Build your first authenticated endpoint
+- [Concepts](/docs/concepts/sessions) - Understand how rs-auth works
+
+## Project Status
+
+rs-auth is in active development. The core authentication flows are stable and production-ready, while OAuth support is experimental and under active development.
+
+Current phase: **Phase 2** (OAuth integration and testing)

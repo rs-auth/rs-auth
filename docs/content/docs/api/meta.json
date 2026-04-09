@@ -1,0 +1,12 @@
+{
+  "title": "API",
+  "pages": [
+    "signup",
+    "login",
+    "logout",
+    "verify-email",
+    "reset-password",
+    "session",
+    "sessions"
+  ]
+}

@@ -1,0 +1,24 @@
+---
+title: CookieConfig
+description: Configure how rs-auth issues cookies in framework integrations.
+---
+
+`rs-auth` keeps cookie behavior framework-specific, but the shared rules live in `CookieConfig`.
+
+The current Axum integration uses signed cookies and applies:
+
+- name
+- path
+- domain
+- secure flag
+- same-site mode
+- http-only flag
+
+Important defaults:
+
+- cookie name: `rs_auth_session`
+- `HttpOnly: true`
+- `Secure: true`
+- `SameSite: Lax`
+
+You should override these only when you have a concrete deployment reason, such as a custom domain strategy or cross-site auth flow requirements.

@@ -1,0 +1,33 @@
+---
+title: Login
+description: Authenticate with email and password.
+---
+
+<Endpoint method="POST" path="/auth/login">
+  Authenticate a user and issue a fresh signed session cookie.
+</Endpoint>
+
+Request body:
+
+```json title="Request"
+{
+  "email": "person@example.com",
+  "password": "super-secret-password"
+}
+```
+
+On success:
+
+- a new session is created
+- the Axum integration sets a signed session cookie
+- the user payload is returned
+
+Common error responses:
+
+- `401 Unauthorized` for invalid credentials
+- `403 Forbidden` when login requires verified email and the user is still unverified
+
+<Callout title="Session behavior" tone="info">
+  Successful login creates a new session record and the Axum integration stores
+  the raw session token in a signed cookie.
+</Callout>

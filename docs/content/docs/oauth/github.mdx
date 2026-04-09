@@ -1,0 +1,13 @@
+---
+title: GitHub OAuth
+description: Configure GitHub login in rs-auth.
+---
+
+GitHub OAuth follows the same flow as Google, but user info handling differs slightly because email resolution may require a second request to GitHub's email endpoint.
+
+Current support includes:
+
+- authorization redirect
+- callback handling
+- account creation/linking
+- session issuance

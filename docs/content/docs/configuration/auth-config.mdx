@@ -1,0 +1,35 @@
+---
+title: AuthConfig
+description: Core runtime configuration for rs-auth.
+---
+
+`AuthConfig` is the main configuration entrypoint for the Rust library.
+
+It controls:
+
+- session lifetime
+- verification and reset token lifetime
+- cookie settings
+- email behavior
+- OAuth provider settings
+
+Typical setup:
+
+```rust title="src/main.rs"
+use rs_auth::core::AuthConfig;
+
+let config = AuthConfig {
+    secret: "replace-me-with-a-real-secret".to_string(),
+    ..Default::default()
+};
+```
+
+Important fields:
+
+- `secret`: used for signed cookies in the Axum integration
+- `session_ttl`: how long sessions remain valid
+- `verification_ttl`: how long email verification tokens remain valid
+- `reset_ttl`: how long password reset tokens remain valid
+- `token_length`: random token length for generated tokens
+
+The default configuration is intentionally usable for development, but production deployments should always set a strong `secret` and explicit database settings.

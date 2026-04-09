@@ -1,0 +1,4 @@
+{
+  "title": "Configuration",
+  "pages": ["auth-config", "cookie-config", "email-config"]
+}

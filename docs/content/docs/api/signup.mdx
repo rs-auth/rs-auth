@@ -1,0 +1,31 @@
+---
+title: Signup
+description: Create a new user account.
+---
+
+`POST /auth/signup`
+
+Creates a new user with email/password credentials.
+
+Request body:
+
+```json title="Request"
+{
+  "email": "person@example.com",
+  "password": "super-secret-password",
+  "name": "Example User"
+}
+```
+
+Default behavior:
+
+- creates the user
+- sends a verification email
+- creates a session immediately
+- sets the signed session cookie in the Axum handler
+
+Possible responses:
+
+- `201 Created`
+- `400 Bad Request` for weak passwords
+- `409 Conflict` for duplicate email

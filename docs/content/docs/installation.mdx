@@ -1,0 +1,131 @@
+---
+title: Installation
+description: Add rs-auth to your Rust project
+---
+
+# Installation
+
+This guide will walk you through adding rs-auth to your Rust project.
+
+## Prerequisites
+
+Before installing rs-auth, ensure you have:
+
+- Rust 1.70 or later
+- PostgreSQL 14 or later
+- Cargo installed
+
+## Add the Dependency
+
+Add rs-auth to your `Cargo.toml`:
+
+```toml title="Cargo.toml"
+[dependencies]
+rs-auth = { git = "https://github.com/rs-auth/rs-auth" }
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls"] }
+```
+
+## Required Dependencies
+
+rs-auth requires several dependencies to function:
+
+### Web Framework
+
+```toml title="Cargo.toml"
+axum = "0.7"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
+```
+
+### Database
+
+```toml title="Cargo.toml"
+sqlx = { version = "0.8", features = [
+  "postgres",
+  "runtime-tokio-rustls",
+  "migrate",
+  "chrono",
+  "uuid"
+] }
+```
+
+### Async Runtime
+
+```toml title="Cargo.toml"
+tokio = { version = "1", features = ["full"] }
+```
+
+### Serialization
+
+```toml title="Cargo.toml"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+```
+
+## Database Setup
+
+rs-auth requires a PostgreSQL database. Create a new database:
+
+```bash title="Terminal"
+createdb rs_auth_dev
+```
+
+Set your database URL as an environment variable:
+
+```bash title="Terminal"
+export DATABASE_URL="postgresql://localhost/rs_auth_dev"
+```
+
+## Run Migrations
+
+rs-auth includes a CLI tool for running database migrations:
+
+```bash title="Terminal"
+cargo install --git https://github.com/rs-auth/rs-auth rs-auth-cli
+```
+
+Run the migrations:
+
+```bash title="Terminal"
+rs-auth-cli migrate
+```
+
+This will create the necessary tables:
+
+- `users` - User accounts
+- `sessions` - Active sessions
+- `email_verification_tokens` - Email verification tokens
+- `password_reset_tokens` - Password reset tokens
+- `oauth_accounts` - OAuth provider accounts (if using OAuth)
+
+## Verify Installation
+
+Create a simple test to verify rs-auth is installed correctly:
+
+```rust title="src/main.rs"
+use rs_auth::AuthConfig;
+
+#[tokio::main]
+async fn main() {
+    let config = AuthConfig::default();
+    println!("rs-auth is installed! Config: {:?}", config);
+}
+```
+
+Run the test:
+
+```bash title="Terminal"
+cargo run
+```
+
+If you see the config output, rs-auth is successfully installed!
+
+## Next Steps
+
+Now that rs-auth is installed, you can:
+
+- Follow the [Quick Start](/docs/quick-start) guide to build your first authenticated endpoint
+- Learn about [Sessions](/docs/concepts/sessions) and how rs-auth manages authentication state
+- Explore the [Configuration](/docs/configuration/auth-config) options

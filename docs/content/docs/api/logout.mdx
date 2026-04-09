@@ -1,0 +1,16 @@
+---
+title: Logout
+description: Revoke the current session.
+---
+
+<Endpoint method="POST" path="/auth/logout">
+  Revoke the current session and clear the signed session cookie.
+</Endpoint>
+
+This endpoint:
+
+- resolves the current session from the cookie
+- deletes the session record from storage
+- removes the signed session cookie from the response
+
+If no valid cookie is present, the endpoint returns `401 Unauthorized`.

@@ -1,0 +1,21 @@
+---
+title: EmailConfig
+description: Configure signup verification and sign-in behavior.
+---
+
+`EmailConfig` controls how strict the auth flow is around verification.
+
+By default:
+
+- verification emails are sent on signup
+- users are auto-signed in after signup
+- login does not require verification unless configured
+
+This matches the more ergonomic Better Auth-style default while still allowing stricter products to opt into gated login.
+
+Useful toggles:
+
+- `send_verification_on_signup`
+- `require_verification_to_login`
+- `auto_sign_in_after_signup`
+- `auto_sign_in_after_verification`

@@ -1,0 +1,15 @@
+---
+title: Router
+description: Mount rs-auth into your Axum application.
+---
+
+The `rs-auth-axum` crate exposes `auth_router` so you can mount auth routes quickly.
+
+```rust title="src/main.rs"
+use axum::Router;
+use rs_auth::axum::auth_router;
+
+let app = Router::new().nest("/auth", auth_router(state));
+```
+
+This keeps the integration thin: `rs-auth-core` owns auth logic and `rs-auth-axum` owns the HTTP layer.

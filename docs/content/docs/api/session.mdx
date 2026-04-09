@@ -1,0 +1,12 @@
+---
+title: Session
+description: Fetch the current authenticated session.
+---
+
+<Endpoint method="GET" path="/auth/session">
+  Resolve the current authenticated session from the signed cookie.
+</Endpoint>
+
+Returns the current user and session when a valid signed cookie is present.
+
+This is the easiest endpoint to call when the frontend needs to bootstrap auth state after a page load.

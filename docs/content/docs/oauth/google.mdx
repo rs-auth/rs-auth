@@ -1,0 +1,28 @@
+---
+title: Google OAuth
+description: Configure Google login in rs-auth.
+---
+
+Google OAuth is implemented in the current Phase 2 codebase.
+
+You must configure:
+
+- client ID
+- client secret
+- redirect URL
+
+The Axum handler flow:
+
+1. redirects the user to Google
+2. stores OAuth state and PKCE verifier
+3. exchanges the callback code
+4. fetches Google user info
+5. creates or links the account
+6. issues a signed session cookie
+
+This flow is covered by service tests and handler tests.
+
+<Callout title="Status" tone="info">
+  Google OAuth is implemented and tested, but the overall OAuth surface should
+  still be treated as early and subject to refinement.
+</Callout>

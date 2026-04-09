@@ -1,0 +1,17 @@
+---
+title: Account Linking
+description: How rs-auth links OAuth identities to users.
+---
+
+Current account linking behavior:
+
+1. if a provider account already exists, login succeeds immediately
+2. otherwise, if the provider email matches an existing user and implicit linking is allowed, rs-auth links the account
+3. otherwise, a new user and account are created
+
+This keeps the first release practical while still leaving space for stricter policies later.
+
+<Callout title="Future direction" tone="warn">
+  If you need stricter account-linking rules, plan for provider trust policies
+  and explicit linking UX on top of the current defaults.
+</Callout>

@@ -1,0 +1,430 @@
+---
+title: Email Verification
+description: Understanding email verification flows in rs-auth
+---
+
+# Email Verification
+
+rs-auth provides flexible email verification flows that can be configured based on your application's security requirements.
+
+## Default Behavior
+
+By default, rs-auth follows a user-friendly approach:
+
+### Signup Flow
+
+1. User submits signup form
+2. Account is created with `email_verified = false`
+3. User is **automatically signed in**
+4. Verification email is sent
+5. User can use the app immediately
+
+This approach prioritizes user experience while still encouraging email verification.
+
+### Why Auto Sign-In?
+
+Auto sign-in after signup provides:
+
+- **Better UX**: Users can start using the app immediately
+- **Higher conversion**: No friction between signup and first use
+- **Gradual verification**: Email verification happens in the background
+
+This is the same approach used by modern apps like GitHub, Notion, and Linear.
+
+## Verification Token Flow
+
+When a user signs up, rs-auth:
+
+### 1. Generates a Verification Token
+
+```rust title="example.rs"
+let token = generate_verification_token(); // 32 random bytes
+let token_hash = sha256(&token);
+```
+
+The token is:
+- Cryptographically random
+- Hashed before database storage
+- Time-limited (default: 24 hours)
+
+### 2. Stores the Token
+
+```sql title="migrations/schema.sql"
+INSERT INTO email_verification_tokens (
+    user_id,
+    token_hash,
+    expires_at
+) VALUES ($1, $2, NOW() + INTERVAL '24 hours')
+```
+
+### 3. Sends Verification Email
+
+```rust title="example.rs"
+send_verification_email(
+    user.email,
+    format!("https://yourapp.com/verify?token={}", token)
+).await?;
+```
+
+The email contains a link with the verification token.
+
+### 4. User Clicks Link
+
+When the user clicks the verification link:
+
+```rust title="example.rs"
+// POST /auth/verify-email
+{
+  "token": "verification-token-here"
+}
+```
+
+rs-auth:
+1. Hashes the provided token
+2. Looks up the token in the database
+3. Checks if it's expired
+4. Marks the user's email as verified
+5. Deletes the token
+
+## Enforcing Email Verification
+
+For applications that require verified emails, you can enforce verification:
+
+### Configuration
+
+```rust title="example.rs"
+let auth_config = AuthConfig::builder()
+    .require_email_verification(true)
+    .build();
+```
+
+With this setting:
+- Signup still creates the account
+- User is **not** automatically signed in
+- Login is blocked until email is verified
+
+### Login Behavior
+
+```rust title="example.rs"
+// POST /auth/login
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
+
+// Response if email not verified
+{
+  "error": "Email not verified",
+  "code": "EMAIL_NOT_VERIFIED"
+}
+```
+
+### Verification Required Middleware
+
+You can also enforce verification at the route level:
+
+```rust title="example.rs"
+use rs_auth::middleware::require_verified_email;
+
+let app = Router::new()
+    .route("/api/sensitive", post(sensitive_handler))
+    .layer(middleware::from_fn(require_verified_email));
+```
+
+This allows:
+- Users to sign in
+- Access to some routes
+- Blocking sensitive routes until verified
+
+## Resending Verification Emails
+
+Users can request a new verification email:
+
+```rust title="example.rs"
+// POST /auth/resend-verification
+{
+  "email": "user@example.com"
+}
+```
+
+rs-auth will:
+1. Check if the email exists
+2. Check if already verified
+3. Generate a new token
+4. Invalidate old tokens
+5. Send a new email
+
+### Rate Limiting
+
+To prevent abuse, implement rate limiting:
+
+```rust title="example.rs"
+use tower::limit::RateLimitLayer;
+
+let app = Router::new()
+    .route("/auth/resend-verification", post(resend_handler))
+    .layer(RateLimitLayer::new(5, Duration::minutes(15)));
+```
+
+This limits users to 5 resend requests per 15 minutes.
+
+## Token Security
+
+### Token Generation
+
+Verification tokens are generated securely:
+
+```rust title="example.rs"
+use rand::Rng;
+
+fn generate_verification_token() -> String {
+    let mut rng = rand::thread_rng();
+    let bytes: [u8; 32] = rng.gen();
+    base64::encode(bytes)
+}
+```
+
+### Token Hashing
+
+Tokens are hashed before storage:
+
+```rust title="example.rs"
+use sha2::{Sha256, Digest};
+
+fn hash_token(token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+```
+
+This means:
+- Database compromise doesn't expose valid tokens
+- Tokens can't be reverse-engineered
+- Each token is single-use
+
+### Token Expiration
+
+Tokens expire after a configurable duration:
+
+```rust title="example.rs"
+let auth_config = AuthConfig::builder()
+    .verification_token_duration(Duration::hours(24))
+    .build();
+```
+
+Expired tokens are:
+- Rejected on verification
+- Cleaned up periodically
+
+## Email Configuration
+
+rs-auth supports multiple email providers:
+
+### SMTP
+
+```rust title="example.rs"
+use rs_auth::email::SmtpConfig;
+
+let email_config = SmtpConfig::builder()
+    .host("smtp.gmail.com")
+    .port(587)
+    .username("your-email@gmail.com")
+    .password(&std::env::var("SMTP_PASSWORD")?)
+    .from("noreply@yourapp.com")
+    .build();
+```
+
+### Resend
+
+```rust title="example.rs"
+use rs_auth::email::ResendConfig;
+
+let email_config = ResendConfig::builder()
+    .api_key(&std::env::var("RESEND_API_KEY")?)
+    .from("noreply@yourapp.com")
+    .build();
+```
+
+### Custom Provider
+
+Implement the `EmailProvider` trait:
+
+```rust title="example.rs"
+use rs_auth::email::EmailProvider;
+
+struct CustomEmailProvider {
+    // Your provider config
+}
+
+#[async_trait]
+impl EmailProvider for CustomEmailProvider {
+    async fn send_email(
+        &self,
+        to: &str,
+        subject: &str,
+        body: &str,
+    ) -> Result<(), EmailError> {
+        // Your implementation
+    }
+}
+```
+
+## Customizing Email Templates
+
+Override the default verification email template:
+
+```rust title="example.rs"
+let auth_config = AuthConfig::builder()
+    .verification_email_template(|token, user| {
+        format!(
+            "Hi {},\n\nClick here to verify: https://app.com/verify?token={}",
+            user.name, token
+        )
+    })
+    .build();
+```
+
+For HTML emails:
+
+```rust title="example.rs"
+.verification_email_template(|token, user| {
+    format!(r#"
+        <!DOCTYPE html>
+        <html>
+        <body>
+            <h1>Welcome, {}!</h1>
+            <p>Click the button below to verify your email:</p>
+            <a href="https://app.com/verify?token={}" 
+               style="background: #000; color: #fff; padding: 12px 24px;">
+                Verify Email
+            </a>
+        </body>
+        </html>
+    "#, user.name, token)
+})
+```
+
+## Verification Status
+
+Check if a user's email is verified:
+
+```rust title="example.rs"
+use rs_auth::extractors::Session;
+
+async fn check_verification(session: Session) -> Json<Status> {
+    let user = get_user(session.user_id).await?;
+    Json(Status {
+        verified: user.email_verified,
+    })
+}
+```
+
+## Best Practices
+
+### 1. Use HTTPS
+
+Always use HTTPS for verification links:
+
+```rust title="example.rs"
+// ❌ Bad
+format!("http://app.com/verify?token={}", token)
+
+// ✅ Good
+format!("https://app.com/verify?token={}", token)
+```
+
+### 2. Short Token Lifetime
+
+Use short-lived tokens (24 hours or less):
+
+```rust title="example.rs"
+.verification_token_duration(Duration::hours(24))
+```
+
+### 3. Single-Use Tokens
+
+Always delete tokens after use:
+
+```rust title="example.rs"
+// After successful verification
+DELETE FROM email_verification_tokens WHERE token_hash = $1
+```
+
+### 4. Clear Error Messages
+
+Provide helpful error messages:
+
+```rust title="example.rs"
+match verify_result {
+    Err(VerificationError::TokenExpired) => {
+        "Token expired. Request a new verification email."
+    }
+    Err(VerificationError::TokenNotFound) => {
+        "Invalid token. Check your email for the correct link."
+    }
+    Err(VerificationError::AlreadyVerified) => {
+        "Email already verified. You can log in."
+    }
+    Ok(_) => "Email verified successfully!"
+}
+```
+
+### 5. Graceful Degradation
+
+Allow users to use the app while unverified, but:
+
+```rust title="example.rs"
+// Show banner for unverified users
+if !user.email_verified {
+    show_verification_banner();
+}
+
+// Block sensitive actions
+if !user.email_verified && is_sensitive_action {
+    return Err("Please verify your email first");
+}
+```
+
+## Verification Flow Examples
+
+### Immediate Access (Default)
+
+```
+1. User signs up
+2. Account created (email_verified = false)
+3. User automatically signed in ✅
+4. Verification email sent
+5. User can use app
+6. User clicks verification link (optional)
+7. Email marked as verified
+```
+
+### Verification Required
+
+```
+1. User signs up
+2. Account created (email_verified = false)
+3. Verification email sent
+4. User tries to log in ❌
+5. Login blocked: "Please verify your email"
+6. User clicks verification link
+7. Email marked as verified
+8. User can now log in ✅
+```
+
+### Gradual Enforcement
+
+```
+1. User signs up
+2. Account created (email_verified = false)
+3. User automatically signed in ✅
+4. User can access basic features
+5. User tries sensitive action ❌
+6. Blocked: "Verify email to continue"
+7. User clicks verification link
+8. Email marked as verified
+9. User can access all features ✅
+```
+
+Choose the flow that best matches your application's security and UX requirements.

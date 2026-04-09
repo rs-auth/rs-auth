@@ -1,0 +1,15 @@
+---
+title: Extractors
+description: Access the current user and session from Axum handlers.
+---
+
+The Axum crate provides extractors for authenticated and optional user resolution.
+
+These work by:
+
+- reading the signed session cookie
+- resolving the raw token
+- hashing it
+- loading the session and user from storage
+
+Use them when you want route handlers to depend on current-user state without reimplementing the session lookup flow.
