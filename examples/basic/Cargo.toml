@@ -6,7 +6,13 @@ publish = false
 
 [dependencies]
 rs-auth = { path = "../../auth" }
-axum-lib = { workspace = true, features = ["tokio", "http1"] }
+rs-auth-axum = { workspace = true }
+rs-auth-core = { workspace = true }
+rs-auth-postgres = { workspace = true }
+axum-lib = { workspace = true, features = ["tokio", "http1", "json"] }
+axum-extra = { workspace = true, features = ["cookie"] }
+serde_json = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true }
 tracing-subscriber = "0.3"

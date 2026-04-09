@@ -14,13 +14,27 @@ readme.workspace = true
 
 [dependencies]
 rs-auth-core = { workspace = true }
-axum-lib = { workspace = true, features = ["macros"] }
+axum-lib = { workspace = true, features = ["json", "macros", "query", "tokio", "http1"] }
+axum-extra = { workspace = true, features = ["cookie", "cookie-signed"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
 tower = { workspace = true }
 tower-layer = { workspace = true }
 tower-service = { workspace = true }
-tower-sessions = { workspace = true, features = ["axum-core"] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+oauth2 = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+http-body-util = "0.1"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { workspace = true, features = ["util"] }
+rs-auth-core = { workspace = true }
+time = { workspace = true }
+url = { workspace = true }
 
 [lints]
 workspace = true
