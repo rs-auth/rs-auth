@@ -1,6 +1,10 @@
 /target
 target/
 **/target/
+/.next
+**/.next/
+/node_modules
+**/node_modules/
 /.idea
 /.vscode
 **/*.rs.bk
