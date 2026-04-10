@@ -1,21 +1,21 @@
 # rs-auth docs
 
-This directory contains the Next.js app for the future `rs-auth` product/docs website.
+Product and documentation site for [rs-auth](https://rs-auth.com) — composable authentication for Rust.
+
+Built with [Next.js](https://nextjs.org), [Fumadocs](https://fumadocs.vercel.app), and deployed to [Vercel](https://vercel.com).
 
 ## Development
-
-Run the dev server with Bun:
 
 ```bash
 bun dev
 ```
 
-Build for production:
+## Production build
 
 ```bash
 bun run build
 ```
 
-## Goal
+## Deploy
 
-This site will replace the earlier documentation-site experiment and grow into a more customizable Better Auth-style product + docs experience.
+Deployed automatically from the `main` branch via Vercel. Root directory is `docs/`.

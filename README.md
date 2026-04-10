@@ -1,5 +1,7 @@
 # rs-auth
 
+**[rs-auth.com](https://rs-auth.com)** · [crates.io](https://crates.io/crates/rs-auth) · [docs.rs](https://docs.rs/rs-auth) · [GitHub](https://github.com/rs-auth/rs-auth)
+
 Composable authentication for Rust, inspired by Better Auth. The `rs-auth` facade crate re-exports `rs-auth-core`, `rs-auth-postgres`, and `rs-auth-axum` for convenient access to the authentication stack.
 
 ## Current Status

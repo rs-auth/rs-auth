@@ -14,6 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://rs-auth.com"),
   title: {
     default: "rs-auth",
     template: "%s | rs-auth",
@@ -21,6 +22,18 @@ export const metadata: Metadata = {
   description: "Composable authentication for Rust with Axum and Postgres.",
   icons: {
     icon: "/favicon.svg",
+  },
+  openGraph: {
+    type: "website",
+    url: "https://rs-auth.com",
+    siteName: "rs-auth",
+    title: "rs-auth",
+    description: "Composable authentication for Rust with Axum and Postgres.",
+  },
+  twitter: {
+    card: "summary",
+    title: "rs-auth",
+    description: "Composable authentication for Rust with Axum and Postgres.",
   },
 };
 
