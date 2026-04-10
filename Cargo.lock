@@ -2147,7 +2147,6 @@ name = "rs-auth"
 version = "0.1.0"
 dependencies = [
  "rs-auth-axum",
- "rs-auth-cli",
  "rs-auth-core",
  "rs-auth-postgres",
 ]

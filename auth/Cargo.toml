@@ -16,13 +16,11 @@ readme.workspace = true
 rs-auth-core = { workspace = true }
 rs-auth-postgres = { workspace = true, optional = true }
 rs-auth-axum = { workspace = true, optional = true }
-rs-auth-cli = { workspace = true, optional = true }
 
 [features]
 default = ["postgres", "axum"]
 postgres = ["dep:rs-auth-postgres"]
 axum = ["dep:rs-auth-axum"]
-cli = ["dep:rs-auth-cli"]
 
 [lints]
 workspace = true

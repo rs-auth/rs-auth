@@ -1,6 +1,6 @@
 # rs-auth
 
-Composable authentication for Rust, inspired by Better Auth. The `rs-auth` facade crate re-exports `rs-auth-core`, `rs-auth-postgres`, `rs-auth-axum`, and `rs-auth-cli` for convenient access to the entire authentication stack.
+Composable authentication for Rust, inspired by Better Auth. The `rs-auth` facade crate re-exports `rs-auth-core`, `rs-auth-postgres`, and `rs-auth-axum` for convenient access to the authentication stack.
 
 ## Current Status
 
