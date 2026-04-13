@@ -4,7 +4,7 @@ use oauth2::{
     basic::BasicClient,
 };
 
-use crate::error::AuthError;
+use crate::error::{AuthError, OAuthError};
 use crate::oauth::{OAuthProviderConfig, OAuthTokens};
 
 // Type alias for a fully configured OAuth client
@@ -54,14 +54,14 @@ pub async fn exchange_code(
     let http_client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|e| AuthError::OAuth(e.to_string()))?;
+        .map_err(|_| AuthError::OAuth(OAuthError::ExchangeFailed))?;
 
     let token_response = client
         .exchange_code(AuthorizationCode::new(code.to_string()))
         .set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier.to_string()))
         .request_async(&http_client)
         .await
-        .map_err(|e| AuthError::OAuth(e.to_string()))?;
+        .map_err(|_| AuthError::OAuth(OAuthError::ExchangeFailed))?;
 
     let access_token = token_response.access_token().secret().clone();
     let refresh_token = token_response.refresh_token().map(|t| t.secret().clone());
@@ -91,15 +91,20 @@ pub async fn exchange_code(
 fn build_client(config: &OAuthProviderConfig) -> Result<ConfiguredClient, AuthError> {
     let client = BasicClient::new(ClientId::new(config.client_id.clone()))
         .set_client_secret(ClientSecret::new(config.client_secret.clone()))
-        .set_auth_uri(
-            AuthUrl::new(config.auth_url.clone()).map_err(|e| AuthError::OAuth(e.to_string()))?,
-        )
-        .set_token_uri(
-            TokenUrl::new(config.token_url.clone()).map_err(|e| AuthError::OAuth(e.to_string()))?,
-        )
-        .set_redirect_uri(
-            RedirectUrl::new(config.redirect_url.clone())
-                .map_err(|e| AuthError::OAuth(e.to_string()))?,
-        );
+        .set_auth_uri(AuthUrl::new(config.auth_url.clone()).map_err(|e| {
+            AuthError::OAuth(OAuthError::Misconfigured {
+                message: format!("invalid auth_url: {e}"),
+            })
+        })?)
+        .set_token_uri(TokenUrl::new(config.token_url.clone()).map_err(|e| {
+            AuthError::OAuth(OAuthError::Misconfigured {
+                message: format!("invalid token_url: {e}"),
+            })
+        })?)
+        .set_redirect_uri(RedirectUrl::new(config.redirect_url.clone()).map_err(|e| {
+            AuthError::OAuth(OAuthError::Misconfigured {
+                message: format!("invalid redirect_url: {e}"),
+            })
+        })?);
     Ok(client)
 }

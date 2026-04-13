@@ -1,5 +1,38 @@
 use thiserror::Error;
 
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum OAuthError {
+    #[error("unknown provider: {provider}")]
+    ProviderNotFound { provider: String },
+
+    #[error("unsupported provider: {provider}")]
+    UnsupportedProvider { provider: String },
+
+    #[error("oauth provider misconfigured: {message}")]
+    Misconfigured { message: String },
+
+    #[error("oauth state invalid or expired")]
+    InvalidState,
+
+    #[error("oauth token exchange failed")]
+    ExchangeFailed,
+
+    #[error("oauth userinfo request failed")]
+    UserInfoFailed,
+
+    #[error("oauth userinfo payload invalid")]
+    UserInfoMalformed,
+
+    #[error("oauth provider did not return an access token")]
+    MissingAccessToken,
+
+    #[error("oauth provider did not provide a usable email")]
+    MissingEmail,
+
+    #[error("account linking by email is disabled")]
+    LinkingDisabled,
+}
+
 /// Authentication error types.
 #[derive(Debug, Error)]
 pub enum AuthError {
@@ -34,5 +67,5 @@ pub enum AuthError {
     Internal(String),
 
     #[error("oauth error: {0}")]
-    OAuth(String),
+    OAuth(#[from] OAuthError),
 }

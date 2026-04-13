@@ -10,13 +10,16 @@ pub async fn run(database_url: &str) -> anyhow::Result<()> {
         db.clone(),
         db.clone(),
         db.clone(),
+        db.clone(),
         db,
         LogEmailSender,
     );
-    let (sessions, verifications) = service
+    let (sessions, verifications, oauth_states) = service
         .cleanup_expired()
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!("Deleted {sessions} expired sessions and {verifications} expired verifications.");
+    println!(
+        "Deleted {sessions} expired sessions, {verifications} expired verifications, and {oauth_states} expired OAuth states."
+    );
     Ok(())
 }

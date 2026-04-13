@@ -11,8 +11,10 @@ rs-auth-core = { workspace = true }
 rs-auth-postgres = { workspace = true }
 axum-lib = { workspace = true, features = ["tokio", "http1", "json"] }
 axum-extra = { workspace = true, features = ["cookie"] }
+dotenvy = "0.15"
 serde_json = { workspace = true }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }
 tokio = { workspace = true, features = ["full"] }
+tower = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = "0.3"

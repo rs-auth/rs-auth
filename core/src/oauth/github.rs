@@ -1,4 +1,4 @@
-use crate::error::AuthError;
+use crate::error::{AuthError, OAuthError};
 use crate::oauth::{OAuthProviderConfig, OAuthUserInfo};
 use serde::Deserialize;
 
@@ -23,37 +23,49 @@ pub async fn fetch_user_info(
     access_token: &str,
 ) -> Result<OAuthUserInfo, AuthError> {
     let client = reqwest::Client::new();
-    let user: GitHubUserResponse = client
+    let user_response = client
         .get(&config.userinfo_url)
         .bearer_auth(access_token)
         .header("User-Agent", "rs-auth")
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .map_err(|e| AuthError::OAuth(e.to_string()))?
+        .map_err(|_| AuthError::OAuth(OAuthError::UserInfoFailed))?;
+
+    if !user_response.status().is_success() {
+        return Err(AuthError::OAuth(OAuthError::UserInfoFailed));
+    }
+
+    let user: GitHubUserResponse = user_response
         .json()
         .await
-        .map_err(|e| AuthError::OAuth(e.to_string()))?;
+        .map_err(|_| AuthError::OAuth(OAuthError::UserInfoMalformed))?;
 
     let email = if let Some(email) = user.email {
         email
     } else {
-        let emails: Vec<GitHubEmail> = client
+        let emails_response = client
             .get("https://api.github.com/user/emails")
             .bearer_auth(access_token)
             .header("User-Agent", "rs-auth")
             .header("Accept", "application/vnd.github+json")
             .send()
             .await
-            .map_err(|e| AuthError::OAuth(e.to_string()))?
+            .map_err(|_| AuthError::OAuth(OAuthError::UserInfoFailed))?;
+
+        if !emails_response.status().is_success() {
+            return Err(AuthError::OAuth(OAuthError::UserInfoFailed));
+        }
+
+        let emails: Vec<GitHubEmail> = emails_response
             .json()
             .await
-            .map_err(|e| AuthError::OAuth(e.to_string()))?;
+            .map_err(|_| AuthError::OAuth(OAuthError::UserInfoMalformed))?;
         emails
             .into_iter()
             .find(|e| e.primary && e.verified)
             .map(|e| e.email)
-            .ok_or_else(|| AuthError::OAuth("no verified primary email found".to_string()))?
+            .ok_or(AuthError::OAuth(OAuthError::MissingEmail))?
     };
 
     Ok(OAuthUserInfo {

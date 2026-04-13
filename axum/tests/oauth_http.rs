@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use axum_lib::body::Body;
+use axum_lib::extract::State;
 use axum_lib::http::{Request, StatusCode};
 use axum_lib::{
     Json, Router,
@@ -14,9 +15,12 @@ use rs_auth_core::AuthService;
 use rs_auth_core::config::{AuthConfig, OAuthConfig, OAuthProviderEntry};
 use rs_auth_core::email::EmailSender;
 use rs_auth_core::error::AuthError;
-use rs_auth_core::store::{AccountStore, SessionStore, UserStore, VerificationStore};
+use rs_auth_core::store::{
+    AccountStore, OAuthStateStore, SessionStore, UserStore, VerificationStore,
+};
 use rs_auth_core::types::{
-    Account, NewAccount, NewSession, NewVerification, Session, User, Verification,
+    Account, NewAccount, NewOAuthState, NewSession, NewVerification, OAuthState, Session, User,
+    Verification,
 };
 use serde_json::json;
 use time::OffsetDateTime;
@@ -32,10 +36,12 @@ struct MemoryState {
     next_session_id: i64,
     next_verification_id: i64,
     next_account_id: i64,
+    next_oauth_state_id: i64,
     users: HashMap<i64, User>,
     sessions: HashMap<i64, Session>,
     verifications: HashMap<i64, Verification>,
     accounts: HashMap<i64, Account>,
+    oauth_states: HashMap<i64, OAuthState>,
 }
 
 #[derive(Clone, Default)]
@@ -300,6 +306,49 @@ impl AccountStore for MemoryStore {
     }
 }
 
+#[async_trait]
+impl OAuthStateStore for MemoryStore {
+    async fn create_oauth_state(&self, new_state: NewOAuthState) -> Result<OAuthState, AuthError> {
+        let mut state = self.inner.lock().unwrap();
+        state.next_oauth_state_id += 1;
+        let now = OffsetDateTime::now_utc();
+        let oauth_state = OAuthState {
+            id: state.next_oauth_state_id,
+            provider_id: new_state.provider_id,
+            csrf_state: new_state.csrf_state,
+            pkce_verifier: new_state.pkce_verifier,
+            expires_at: new_state.expires_at,
+            created_at: now,
+        };
+        state
+            .oauth_states
+            .insert(oauth_state.id, oauth_state.clone());
+        Ok(oauth_state)
+    }
+
+    async fn find_by_csrf_state(&self, csrf_state: &str) -> Result<Option<OAuthState>, AuthError> {
+        let state = self.inner.lock().unwrap();
+        Ok(state
+            .oauth_states
+            .values()
+            .find(|s| s.csrf_state == csrf_state)
+            .cloned())
+    }
+
+    async fn delete_oauth_state(&self, id: i64) -> Result<(), AuthError> {
+        self.inner.lock().unwrap().oauth_states.remove(&id);
+        Ok(())
+    }
+
+    async fn delete_expired_oauth_states(&self) -> Result<u64, AuthError> {
+        let now = OffsetDateTime::now_utc();
+        let mut state = self.inner.lock().unwrap();
+        let before = state.oauth_states.len();
+        state.oauth_states.retain(|_, s| s.expires_at >= now);
+        Ok((before - state.oauth_states.len()) as u64)
+    }
+}
+
 // ============================================================================
 // Test email sender
 // ============================================================================
@@ -365,6 +414,7 @@ fn test_oauth_app(store: MemoryStore, email: TestEmailSender) -> axum_lib::Route
         store.clone(),
         store.clone(),
         store.clone(),
+        store.clone(),
         store,
         email,
     );
@@ -398,6 +448,7 @@ fn test_oauth_app_with_google_override(
     };
     let service = AuthService::new(
         config,
+        store.clone(),
         store.clone(),
         store.clone(),
         store.clone(),
@@ -437,6 +488,7 @@ fn test_oauth_app_with_google_override_and_error_redirect(
         store.clone(),
         store.clone(),
         store.clone(),
+        store.clone(),
         store,
         email,
     );
@@ -445,33 +497,58 @@ fn test_oauth_app_with_google_override_and_error_redirect(
 }
 
 async fn spawn_mock_google_provider() -> String {
-    async fn authorize() -> &'static str {
-        "ok"
-    }
-
-    async fn token() -> Json<serde_json::Value> {
-        Json(json!({
+    spawn_mock_google_provider_with(
+        StatusCode::OK,
+        json!({
             "access_token": "mock-access-token",
             "refresh_token": "mock-refresh-token",
             "token_type": "Bearer",
             "expires_in": 3600,
             "scope": "openid email profile"
-        }))
-    }
-
-    async fn userinfo() -> Json<serde_json::Value> {
-        Json(json!({
+        }),
+        StatusCode::OK,
+        json!({
             "sub": "google-user-123",
             "email": "oauth@example.com",
             "name": "OAuth User",
             "picture": "https://example.com/avatar.png"
-        }))
+        }),
+    )
+    .await
+}
+
+async fn spawn_mock_google_provider_with(
+    token_status: StatusCode,
+    token_payload: serde_json::Value,
+    userinfo_status: StatusCode,
+    userinfo_payload: serde_json::Value,
+) -> String {
+    async fn authorize() -> &'static str {
+        "ok"
+    }
+
+    async fn token(
+        State((status, payload)): State<(StatusCode, serde_json::Value)>,
+    ) -> (StatusCode, Json<serde_json::Value>) {
+        (status, Json(payload))
+    }
+
+    async fn userinfo(
+        State((status, payload)): State<(StatusCode, serde_json::Value)>,
+    ) -> (StatusCode, Json<serde_json::Value>) {
+        (status, Json(payload))
     }
 
     let app = Router::new()
         .route("/authorize", get(authorize))
-        .route("/token", post(token))
-        .route("/userinfo", get(userinfo));
+        .route(
+            "/token",
+            post(token).with_state((token_status, token_payload)),
+        )
+        .route(
+            "/userinfo",
+            get(userinfo).with_state((userinfo_status, userinfo_payload)),
+        );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -651,16 +728,16 @@ async fn oauth_callback_missing_code_returns_error() {
 async fn oauth_callback_expired_state_returns_error() {
     let store = MemoryStore::default();
     let email = TestEmailSender::default();
+    let store_clone = store.clone();
 
-    // Pre-seed an expired verification
-    let identifier = "oauth-state:test-state-123".to_string();
-    let expired_verification = NewVerification {
-        identifier,
-        token_hash: "test-pkce-verifier".to_string(),
-        expires_at: OffsetDateTime::now_utc() - time::Duration::hours(1),
-    };
+    // Pre-seed an expired OAuth state
     store
-        .create_verification(expired_verification)
+        .create_oauth_state(NewOAuthState {
+            provider_id: "google".to_string(),
+            csrf_state: "test-state-123".to_string(),
+            pkce_verifier: "test-pkce-verifier".to_string(),
+            expires_at: OffsetDateTime::now_utc() - time::Duration::hours(1),
+        })
         .await
         .unwrap();
 
@@ -680,6 +757,15 @@ async fn oauth_callback_expired_state_returns_error() {
         "Expected error status for expired state, got: {}",
         status
     );
+
+    assert!(
+        store_clone
+            .find_by_csrf_state("test-state-123")
+            .await
+            .unwrap()
+            .is_none(),
+        "expired oauth state should be deleted after callback"
+    );
 }
 
 #[tokio::test]
@@ -687,14 +773,16 @@ async fn oauth_callback_valid_state_fails_at_exchange() {
     let store = MemoryStore::default();
     let email = TestEmailSender::default();
 
-    // Pre-seed a valid verification
-    let identifier = "oauth-state:valid-state".to_string();
-    let valid_verification = NewVerification {
-        identifier,
-        token_hash: "test-pkce-verifier".to_string(),
-        expires_at: OffsetDateTime::now_utc() + time::Duration::hours(1),
-    };
-    store.create_verification(valid_verification).await.unwrap();
+    // Pre-seed a valid OAuth state
+    store
+        .create_oauth_state(NewOAuthState {
+            provider_id: "google".to_string(),
+            csrf_state: "valid-state".to_string(),
+            pkce_verifier: "test-pkce-verifier".to_string(),
+            expires_at: OffsetDateTime::now_utc() + time::Duration::hours(1),
+        })
+        .await
+        .unwrap();
 
     let app = test_oauth_app(store, email);
 
@@ -718,7 +806,7 @@ async fn oauth_callback_valid_state_fails_at_exchange() {
 }
 
 #[tokio::test]
-async fn oauth_login_stores_state_in_verifications() {
+async fn oauth_login_stores_state_in_oauth_states() {
     let store = MemoryStore::default();
     let email = TestEmailSender::default();
 
@@ -757,20 +845,18 @@ async fn oauth_login_stores_state_in_verifications() {
         .map(|(_, value)| value.to_string())
         .expect("State parameter should be present in authorization URL");
 
-    // Check that a verification was created with the correct identifier
-    let identifier = format!("oauth-state:{}", state_param);
-    let verification = store_clone
-        .find_by_identifier(&identifier)
+    // Check that an OAuth state record was created with the correct state
+    let oauth_state = store_clone
+        .find_by_csrf_state(&state_param)
         .await
         .unwrap()
-        .expect("Verification should exist for OAuth state");
+        .expect("OAuth state should exist for login state");
 
-    // Verify the identifier format
-    assert!(verification.identifier.starts_with("oauth-state:"));
-    // Verify the token_hash contains the PKCE verifier (not empty)
-    assert!(!verification.token_hash.is_empty());
+    assert_eq!(oauth_state.provider_id, "google");
+    assert_eq!(oauth_state.csrf_state, state_param);
+    assert!(!oauth_state.pkce_verifier.is_empty());
     // Verify it's not expired
-    assert!(verification.expires_at > OffsetDateTime::now_utc());
+    assert!(oauth_state.expires_at > OffsetDateTime::now_utc());
 }
 
 #[tokio::test]
@@ -779,11 +865,11 @@ async fn oauth_callback_success_returns_json_and_sets_cookie() {
     let email = TestEmailSender::default();
     let provider_url = spawn_mock_google_provider().await;
 
-    let identifier = "oauth-state:success-state".to_string();
     store
-        .create_verification(NewVerification {
-            identifier,
-            token_hash: "pkce-verifier".to_string(),
+        .create_oauth_state(NewOAuthState {
+            provider_id: "google".to_string(),
+            csrf_state: "success-state".to_string(),
+            pkce_verifier: "pkce-verifier".to_string(),
             expires_at: OffsetDateTime::now_utc() + time::Duration::hours(1),
         })
         .await
@@ -808,16 +894,52 @@ async fn oauth_callback_success_returns_json_and_sets_cookie() {
 }
 
 #[tokio::test]
+async fn oauth_callback_replay_fails_after_successful_callback() {
+    let store = MemoryStore::default();
+    let email = TestEmailSender::default();
+    let provider_url = spawn_mock_google_provider().await;
+
+    store
+        .create_oauth_state(NewOAuthState {
+            provider_id: "google".to_string(),
+            csrf_state: "replay-state".to_string(),
+            pkce_verifier: "pkce-verifier".to_string(),
+            expires_at: OffsetDateTime::now_utc() + time::Duration::hours(1),
+        })
+        .await
+        .unwrap();
+
+    let app = test_oauth_app_with_google_override(store, email, &provider_url, None);
+    let request = Request::builder()
+        .method("GET")
+        .uri("/callback/google?code=realistic-code&state=replay-state")
+        .body(Body::empty())
+        .unwrap();
+
+    let (status, _body, _headers) = send_request(app.clone(), request).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let replay_request = Request::builder()
+        .method("GET")
+        .uri("/callback/google?code=realistic-code&state=replay-state")
+        .body(Body::empty())
+        .unwrap();
+
+    let (replay_status, _body, _headers) = send_request(app, replay_request).await;
+    assert_eq!(replay_status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn oauth_callback_success_redirects_when_configured() {
     let store = MemoryStore::default();
     let email = TestEmailSender::default();
     let provider_url = spawn_mock_google_provider().await;
 
-    let identifier = "oauth-state:success-redirect-state".to_string();
     store
-        .create_verification(NewVerification {
-            identifier,
-            token_hash: "pkce-verifier".to_string(),
+        .create_oauth_state(NewOAuthState {
+            provider_id: "google".to_string(),
+            csrf_state: "success-redirect-state".to_string(),
+            pkce_verifier: "pkce-verifier".to_string(),
             expires_at: OffsetDateTime::now_utc() + time::Duration::hours(1),
         })
         .await
@@ -882,4 +1004,102 @@ async fn oauth_callback_error_redirects_when_configured() {
         .find(|(name, _)| name == "location")
         .map(|(_, value)| value.as_str());
     assert_eq!(location, Some("/login?error=oauth"));
+}
+
+#[tokio::test]
+async fn oauth_callback_malformed_userinfo_returns_error() {
+    let store = MemoryStore::default();
+    let email = TestEmailSender::default();
+    let provider_url = spawn_mock_google_provider_with(
+        StatusCode::OK,
+        json!({
+            "access_token": "mock-access-token",
+            "refresh_token": "mock-refresh-token",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": "openid email profile"
+        }),
+        StatusCode::OK,
+        json!({
+            "not_sub": "missing expected google fields"
+        }),
+    )
+    .await;
+
+    store
+        .create_oauth_state(NewOAuthState {
+            provider_id: "google".to_string(),
+            csrf_state: "malformed-userinfo-state".to_string(),
+            pkce_verifier: "pkce-verifier".to_string(),
+            expires_at: OffsetDateTime::now_utc() + time::Duration::hours(1),
+        })
+        .await
+        .unwrap();
+
+    let app = test_oauth_app_with_google_override(store, email, &provider_url, None);
+    let request = Request::builder()
+        .method("GET")
+        .uri("/callback/google?code=realistic-code&state=malformed-userinfo-state")
+        .body(Body::empty())
+        .unwrap();
+
+    let (status, _body, _headers) = send_request(app, request).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn oauth_login_duplicate_provider_config_returns_server_error() {
+    let store = MemoryStore::default();
+    let email = TestEmailSender::default();
+    let config = AuthConfig {
+        secret: "long-enough-secret-for-cookie-signing-at-least-64-bytes-long-here".to_string(),
+        oauth: OAuthConfig {
+            providers: vec![
+                OAuthProviderEntry {
+                    provider_id: "google".to_string(),
+                    client_id: "a".to_string(),
+                    client_secret: "b".to_string(),
+                    redirect_url: "http://localhost:3000/auth/callback/google".to_string(),
+                    auth_url: None,
+                    token_url: None,
+                    userinfo_url: None,
+                },
+                OAuthProviderEntry {
+                    provider_id: "google".to_string(),
+                    client_id: "c".to_string(),
+                    client_secret: "d".to_string(),
+                    redirect_url: "http://localhost:3000/auth/callback/google-2".to_string(),
+                    auth_url: None,
+                    token_url: None,
+                    userinfo_url: None,
+                },
+            ],
+            allow_implicit_account_linking: true,
+            success_redirect: None,
+            error_redirect: None,
+        },
+        ..Default::default()
+    };
+    let service = AuthService::new(
+        config,
+        store.clone(),
+        store.clone(),
+        store.clone(),
+        store.clone(),
+        store,
+        email,
+    );
+    let state = AuthState::new(service);
+    let app = auth_router(state.clone()).with_state(state);
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/login/google")
+        .body(Body::empty())
+        .unwrap();
+
+    let (status, _body, _headers) = send_request(app, request).await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
 }

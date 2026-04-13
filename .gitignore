@@ -8,3 +8,8 @@ target/
 /.idea
 /.vscode
 **/*.rs.bk
+/tmp/
+.env
+**/.env
+.env.*
+**/.env.*

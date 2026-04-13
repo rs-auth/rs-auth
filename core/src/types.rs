@@ -191,3 +191,35 @@ pub struct NewAccount {
     /// OAuth scope granted.
     pub scope: Option<String>,
 }
+
+// ---------- OAuth State ----------
+
+/// Transient OAuth state record for CSRF protection and PKCE verification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthState {
+    /// Unique OAuth state ID.
+    pub id: i64,
+    /// OAuth provider identifier (e.g., "google", "github").
+    pub provider_id: String,
+    /// CSRF state token used to correlate login and callback requests.
+    pub csrf_state: String,
+    /// PKCE verifier for the OAuth code exchange.
+    pub pkce_verifier: String,
+    /// Timestamp when this state expires.
+    pub expires_at: OffsetDateTime,
+    /// Timestamp when this state was created.
+    pub created_at: OffsetDateTime,
+}
+
+/// Input for creating a new transient OAuth state.
+#[derive(Debug, Clone)]
+pub struct NewOAuthState {
+    /// OAuth provider identifier (e.g., "google", "github").
+    pub provider_id: String,
+    /// CSRF state token.
+    pub csrf_state: String,
+    /// PKCE verifier for the OAuth code exchange.
+    pub pkce_verifier: String,
+    /// Timestamp when this state expires.
+    pub expires_at: OffsetDateTime,
+}

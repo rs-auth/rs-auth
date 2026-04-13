@@ -91,8 +91,8 @@ where
 }
 
 /// Resolve the current user from the session cookie. Returns an error if no valid session exists.
-pub async fn require_current_user<U, S, V, A, E>(
-    state: &AuthState<U, S, V, A, E>,
+pub async fn require_current_user<U, S, V, A, O, E>(
+    state: &AuthState<U, S, V, A, O, E>,
     jar: &SignedCookieJar,
 ) -> Result<CurrentUser, ApiError>
 where
@@ -100,6 +100,7 @@ where
     S: rs_auth_core::store::SessionStore,
     V: rs_auth_core::store::VerificationStore,
     A: rs_auth_core::store::AccountStore,
+    O: rs_auth_core::store::OAuthStateStore,
     E: rs_auth_core::email::EmailSender,
 {
     let token = get_session_token(jar, &state.config.cookie)
@@ -113,8 +114,8 @@ where
 }
 
 /// Resolve the current user from the session cookie. Returns `None` if no valid session exists.
-pub async fn resolve_optional_user<U, S, V, A, E>(
-    state: &AuthState<U, S, V, A, E>,
+pub async fn resolve_optional_user<U, S, V, A, O, E>(
+    state: &AuthState<U, S, V, A, O, E>,
     jar: &SignedCookieJar,
 ) -> Result<OptionalUser, ApiError>
 where
@@ -122,6 +123,7 @@ where
     S: rs_auth_core::store::SessionStore,
     V: rs_auth_core::store::VerificationStore,
     A: rs_auth_core::store::AccountStore,
+    O: rs_auth_core::store::OAuthStateStore,
     E: rs_auth_core::email::EmailSender,
 {
     let Some(token) = get_session_token(jar, &state.config.cookie) else {

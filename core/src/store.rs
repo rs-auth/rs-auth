@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 
 use crate::error::AuthError;
-use crate::types::{Account, NewAccount, NewSession, NewVerification, Session, User, Verification};
+use crate::types::{
+    Account, NewAccount, NewOAuthState, NewSession, NewVerification, OAuthState, Session, User,
+    Verification,
+};
 
 /// Storage backend for user records.
 #[async_trait]
@@ -72,4 +75,13 @@ pub trait AccountStore: Send + Sync {
     ) -> Result<Option<Account>, AuthError>;
     async fn find_by_user_id(&self, user_id: i64) -> Result<Vec<Account>, AuthError>;
     async fn delete_account(&self, id: i64) -> Result<(), AuthError>;
+}
+
+/// Storage backend for transient OAuth state records.
+#[async_trait]
+pub trait OAuthStateStore: Send + Sync {
+    async fn create_oauth_state(&self, state: NewOAuthState) -> Result<OAuthState, AuthError>;
+    async fn find_by_csrf_state(&self, csrf_state: &str) -> Result<Option<OAuthState>, AuthError>;
+    async fn delete_oauth_state(&self, id: i64) -> Result<(), AuthError>;
+    async fn delete_expired_oauth_states(&self) -> Result<u64, AuthError>;
 }

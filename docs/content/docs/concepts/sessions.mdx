@@ -147,10 +147,10 @@ async fn get_content(session: OptionalSession) -> Json<Content> {
 Always use a strong cookie secret:
 
 ```rust title="src/main.rs"
-// ❌ Bad
+// Avoid
 .cookie_secret("secret")
 
-// ✅ Good
+// Prefer
 .cookie_secret(&std::env::var("COOKIE_SECRET")?)
 ```
 

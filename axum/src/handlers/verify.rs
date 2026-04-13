@@ -16,8 +16,8 @@ pub struct VerifyResponse {
     pub user: PublicUser,
 }
 
-pub async fn verify_email<U, S, V, A, E>(
-    State(state): State<AuthState<U, S, V, A, E>>,
+pub async fn verify_email<U, S, V, A, O, E>(
+    State(state): State<AuthState<U, S, V, A, O, E>>,
     jar: SignedCookieJar,
     headers: HeaderMap,
     Path(token): Path<String>,
@@ -27,6 +27,7 @@ where
     S: rs_auth_core::store::SessionStore + Send + Sync + 'static,
     V: rs_auth_core::store::VerificationStore + Send + Sync + 'static,
     A: rs_auth_core::store::AccountStore + Send + Sync + 'static,
+    O: rs_auth_core::store::OAuthStateStore + Send + Sync + 'static,
     E: rs_auth_core::email::EmailSender + Send + Sync + 'static,
 {
     let result = state

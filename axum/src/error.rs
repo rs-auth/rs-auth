@@ -18,7 +18,40 @@ impl IntoResponse for ApiError {
             AuthError::InvalidToken => (StatusCode::BAD_REQUEST, "token invalid or expired"),
             AuthError::EmailNotVerified => (StatusCode::FORBIDDEN, "email not verified"),
             AuthError::WeakPassword(_) => (StatusCode::BAD_REQUEST, "password too weak"),
-            AuthError::OAuth(_) => (StatusCode::BAD_REQUEST, "oauth error"),
+            AuthError::OAuth(error) => match error {
+                rs_auth_core::error::OAuthError::ProviderNotFound { .. } => {
+                    (StatusCode::BAD_REQUEST, "oauth provider not configured")
+                }
+                rs_auth_core::error::OAuthError::UnsupportedProvider { .. } => {
+                    (StatusCode::BAD_REQUEST, "oauth provider unsupported")
+                }
+                rs_auth_core::error::OAuthError::Misconfigured { .. } => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, "oauth misconfigured")
+                }
+                rs_auth_core::error::OAuthError::InvalidState => {
+                    (StatusCode::BAD_REQUEST, "oauth state invalid or expired")
+                }
+                rs_auth_core::error::OAuthError::ExchangeFailed => {
+                    (StatusCode::BAD_REQUEST, "oauth token exchange failed")
+                }
+                rs_auth_core::error::OAuthError::UserInfoFailed => {
+                    (StatusCode::BAD_REQUEST, "oauth userinfo request failed")
+                }
+                rs_auth_core::error::OAuthError::UserInfoMalformed => {
+                    (StatusCode::BAD_REQUEST, "oauth userinfo payload invalid")
+                }
+                rs_auth_core::error::OAuthError::MissingAccessToken => (
+                    StatusCode::BAD_REQUEST,
+                    "oauth provider did not return an access token",
+                ),
+                rs_auth_core::error::OAuthError::MissingEmail => (
+                    StatusCode::BAD_REQUEST,
+                    "oauth provider did not provide a usable email",
+                ),
+                rs_auth_core::error::OAuthError::LinkingDisabled => {
+                    (StatusCode::BAD_REQUEST, "oauth account linking is disabled")
+                }
+            },
             AuthError::Hash(_) | AuthError::Store(_) | AuthError::Internal(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal error")
             }

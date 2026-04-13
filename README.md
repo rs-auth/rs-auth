@@ -8,7 +8,7 @@ Composable authentication for Rust, inspired by Better Auth. The `rs-auth` facad
 
 **Phase 1 (Email/Password Authentication)** is complete and production-ready.
 
-**Phase 2 (OAuth)** exists with support for Google and GitHub providers, but is still early and experimental. The API may change in future releases.
+**Phase 2 (OAuth)** is available for stable Google and GitHub login and callback flows.
 
 ## Features
 
@@ -21,7 +21,7 @@ Composable authentication for Rust, inspired by Better Auth. The `rs-auth` facad
 - Configurable session and token TTLs
 - Auto sign-in after signup
 - CLI for migrations and cleanup
-- OAuth login and callback for Google and GitHub (experimental)
+- OAuth login and callback for Google and GitHub
 
 ## Workspace Layout
 
@@ -71,14 +71,15 @@ async fn main() {
     run_migrations(&pool).await.unwrap();
 
     let db = AuthDb::new(pool);
-    let auth_service = AuthService::new(
-        AuthConfig::default(),
-        db.clone(),
-        db.clone(),
-        db.clone(),
-        db,
-        LogEmailSender,
-    );
+     let auth_service = AuthService::new(
+         AuthConfig::default(),
+         db.clone(),
+         db.clone(),
+         db.clone(),
+         db.clone(),
+         db,
+         LogEmailSender,
+     );
     let auth_state = AuthState::new(auth_service);
 
     let app = Router::new()
@@ -93,7 +94,7 @@ async fn main() {
 }
 
 async fn me(
-    State(state): State<AuthState<AuthDb, AuthDb, AuthDb, AuthDb, LogEmailSender>>,
+    State(state): State<AuthState<AuthDb, AuthDb, AuthDb, AuthDb, AuthDb, LogEmailSender>>,
     jar: SignedCookieJar,
 ) -> Json<serde_json::Value> {
     let user = resolve_optional_user(&state, &jar).await.unwrap();
@@ -152,7 +153,7 @@ The `rs-auth-cli` binary provides three commands:
 rs-auth-cli migrate --database-url postgres://user:pass@localhost/db
 ```
 
-Creates the necessary database tables for users, sessions, verification tokens, and OAuth accounts.
+Creates the necessary database tables for users, sessions, verification tokens, OAuth accounts, and OAuth state.
 
 ### Generate Migration
 
@@ -168,11 +169,25 @@ Generates a new migration file template.
 rs-auth-cli cleanup --database-url postgres://user:pass@localhost/db
 ```
 
-Removes expired sessions and verification tokens from the database.
+Removes expired sessions, verification tokens, and OAuth state from the database.
 
-## OAuth (Experimental)
+## OAuth
 
-Google and GitHub OAuth providers are supported. Configure OAuth with `OAuthConfig`:
+Google and GitHub OAuth providers are supported. Stable endpoints are:
+
+- `GET /auth/login/{provider}`
+- `GET /auth/callback/{provider}`
+
+Stable behavior includes:
+
+- OAuth login
+- account creation
+- implicit account linking
+- session creation
+- JSON callback responses
+- redirect-mode callback responses
+
+Configure OAuth with `OAuthConfig`:
 
 ```rust
 use rs_auth_core::{AuthConfig, OAuthConfig, OAuthProviderEntry};
@@ -205,9 +220,22 @@ config.oauth = OAuthConfig {
 };
 ```
 
-OAuth transient state (CSRF tokens and PKCE verifiers) is currently stored in the `verifications` table to reuse existing infrastructure. This approach may change in future versions if OAuth features expand significantly.
+OAuth transient state is stored separately from verification tokens. Each record stores:
 
-Note: The OAuth implementation is early and the API may change in future releases.
+- `provider_id`
+- `csrf_state`
+- `pkce_verifier`
+- `expires_at`
+
+This keeps email/reset verification tokens isolated from OAuth login state and allows operational cleanup to handle both flows independently.
+
+Out of scope for the current OAuth milestone:
+
+- additional providers
+- token refresh workflows
+- unlinking accounts
+- admin tooling
+- provider management UX
 
 ## API Endpoints
 
@@ -223,8 +251,8 @@ The `auth_router` provides the following endpoints:
 | GET    | `/auth/verify/{token}`    | Verify email with token              |
 | POST   | `/auth/forgot`            | Request password reset               |
 | POST   | `/auth/reset`             | Reset password with token            |
-| GET    | `/auth/login/{provider}`  | Initiate OAuth login (experimental)  |
-| GET    | `/auth/callback/{provider}` | OAuth callback handler (experimental) |
+| GET    | `/auth/login/{provider}`  | Initiate OAuth login                 |
+| GET    | `/auth/callback/{provider}` | OAuth callback handler               |
 
 ## License
 

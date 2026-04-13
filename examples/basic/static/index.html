@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>rs-auth example</title>
+  <style>
+    :root { --bg: #0a0a0a; --card: #141414; --border: #262626; --text: #e5e5e5; --muted: #737373; --accent: #3b82f6; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 2rem 1rem; }
+    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1.5rem; width: 100%; max-width: 400px; margin-bottom: 1rem; }
+    .card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; }
+    label { display: block; font-size: 0.875rem; color: var(--muted); margin-bottom: 0.25rem; }
+    input { width: 100%; padding: 0.5rem 0.75rem; border-radius: 0.5rem; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 0.875rem; margin-bottom: 0.75rem; outline: none; }
+    input:focus { border-color: var(--accent); }
+    button { width: 100%; padding: 0.625rem; border-radius: 0.5rem; border: none; background: var(--accent); color: #fff; font-size: 0.875rem; font-weight: 500; cursor: pointer; margin-bottom: 0.5rem; }
+    button:hover { opacity: 0.9; }
+    button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .divider { display: flex; align-items: center; gap: 0.75rem; margin: 0.75rem 0; color: var(--muted); font-size: 0.75rem; }
+    .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+    .oauth-row { display: flex; gap: 0.5rem; }
+    .oauth-row button { flex: 1; }
+    .oauth-row button.google { background: #ea4335; }
+    .oauth-row button.github { background: #24292e; }
+    #alert { padding: 0.75rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; margin-bottom: 1rem; width: 100%; max-width: 400px; display: none; }
+    #alert.error { display: block; background: #451a1a; border: 1px solid #7f1d1d; color: #fca5a5; }
+    #alert.success { display: block; background: #0a2e1a; border: 1px solid #14532d; color: #86efac; }
+    pre { background: var(--bg); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem; font-size: 0.8rem; overflow: auto; margin-top: 0.5rem; white-space: pre-wrap; word-break: break-all; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <h1>rs-auth example</h1>
+  <div id="alert"></div>
+
+  <!-- Unauthenticated view -->
+  <div id="auth-forms">
+    <div class="card" id="signup-card">
+      <h2>Sign up</h2>
+      <form id="signup-form">
+        <label for="signup-email">Email</label>
+        <input type="email" id="signup-email" autocomplete="email" required>
+        <label for="signup-name">Name</label>
+        <input type="text" id="signup-name" autocomplete="name">
+        <label for="signup-password">Password</label>
+        <input type="password" id="signup-password" autocomplete="new-password" required minlength="8">
+        <button type="submit">Create account</button>
+      </form>
+      <div class="divider">or</div>
+      <div class="oauth-row">
+        <button class="google" onclick="window.location.href='/auth/login/google'">Google</button>
+        <button class="github" onclick="window.location.href='/auth/login/github'">GitHub</button>
+      </div>
+      <button class="secondary" onclick="toggleForm('login')">Already have an account? Log in</button>
+    </div>
+
+    <div class="card hidden" id="login-card">
+      <h2>Log in</h2>
+      <form id="login-form">
+        <label for="login-email">Email</label>
+        <input type="email" id="login-email" autocomplete="email" required>
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" autocomplete="current-password" required>
+        <button type="submit">Log in</button>
+      </form>
+      <div class="divider">or</div>
+      <div class="oauth-row">
+        <button class="google" onclick="window.location.href='/auth/login/google'">Google</button>
+        <button class="github" onclick="window.location.href='/auth/login/github'">GitHub</button>
+      </div>
+      <button class="secondary" onclick="toggleForm('signup')">Need an account? Sign up</button>
+    </div>
+
+    <div class="card hidden" id="forgot-card">
+      <h2>Reset password</h2>
+      <form id="forgot-form">
+        <label for="forgot-email">Email</label>
+        <input type="email" id="forgot-email" autocomplete="email" required>
+        <button type="submit">Send reset link</button>
+      </form>
+      <button class="secondary" onclick="toggleForm('login')">Back to log in</button>
+    </div>
+  </div>
+
+  <!-- Authenticated view -->
+  <div id="dashboard" class="hidden">
+    <div class="card">
+      <h2>Current user</h2>
+      <pre id="user-json"></pre>
+    </div>
+    <div class="card">
+      <h2>Sessions</h2>
+      <pre id="sessions-json"></pre>
+    </div>
+    <div class="card">
+      <h2>Protected API call</h2>
+      <pre id="protected-json">Loading...</pre>
+      <button onclick="fetchProtected()">Refresh</button>
+    </div>
+    <div class="card">
+      <form id="logout-form">
+        <button type="submit" class="secondary">Log out</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const BASE = "";
+
+    function $(sel) { return document.querySelector(sel); }
+    function $$(sel) { return document.querySelectorAll(sel); }
+
+    function show(msg, type) {
+      const el = $("#alert");
+      el.textContent = msg;
+      el.className = type;
+    }
+
+    function toggleForm(which) {
+      $("#signup-card").classList.toggle("hidden", which !== "signup");
+      $("#login-card").classList.toggle("hidden", which !== "login");
+      $("#forgot-card").classList.toggle("hidden", which !== "forgot");
+    }
+
+    async function api(method, path, body) {
+      const opts = { method, headers: {} };
+      if (body) {
+        opts.headers["content-type"] = "application/json";
+        opts.body = JSON.stringify(body);
+      }
+      const res = await fetch(BASE + path, opts);
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = text; }
+      if (!res.ok) throw data;
+      return data;
+    }
+
+    async function refreshDashboard() {
+      try {
+        const me = await api("GET", "/me");
+        if (me.user) {
+          $("#auth-forms").classList.add("hidden");
+          $("#dashboard").classList.remove("hidden");
+          $("#user-json").textContent = JSON.stringify(me.user, null, 2);
+          const sessions = await api("GET", "/auth/sessions");
+          $("#sessions-json").textContent = JSON.stringify(sessions, null, 2);
+          fetchProtected();
+        } else {
+          $("#auth-forms").classList.remove("hidden");
+          $("#dashboard").classList.add("hidden");
+          $("#user-json").textContent = "";
+          $("#sessions-json").textContent = "";
+          $("#protected-json").textContent = "";
+          toggleForm("login");
+        }
+      } catch {
+        $("#auth-forms").classList.remove("hidden");
+        $("#dashboard").classList.add("hidden");
+        $("#user-json").textContent = "";
+        $("#sessions-json").textContent = "";
+        $("#protected-json").textContent = "";
+        toggleForm("login");
+      }
+    }
+
+    async function fetchProtected() {
+      try {
+        const data = await api("GET", "/protected");
+        $("#protected-json").textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        $("#protected-json").textContent = JSON.stringify(e, null, 2);
+      }
+    }
+
+    $("#signup-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        await api("POST", "/auth/signup", {
+          email: $("#signup-email").value,
+          name: $("#signup-name").value || null,
+          password: $("#signup-password").value,
+        });
+        show("Account created", "success");
+        refreshDashboard();
+      } catch (e) {
+        show(e.error || "Signup failed", "error");
+      }
+    });
+
+    $("#login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        await api("POST", "/auth/login", {
+          email: $("#login-email").value,
+          password: $("#login-password").value,
+        });
+        show("Logged in", "success");
+        refreshDashboard();
+      } catch (e) {
+        show(e.error || "Login failed", "error");
+      }
+    });
+
+    $("#forgot-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        await api("POST", "/auth/forgot", { email: $("#forgot-email").value });
+        show("If that email exists, a reset link was sent", "success");
+      } catch (e) {
+        show(e.error || "Request failed", "error");
+      }
+    });
+
+    $("#logout-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        await api("POST", "/auth/logout");
+        show("Logged out", "success");
+        refreshDashboard();
+      } catch (e) {
+        show(e.error || "Logout failed", "error");
+      }
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("verified")) show("Email verified", "success");
+    if (params.get("error")) show(params.get("error"), "error");
+
+    refreshDashboard();
+  </script>
+</body>
+</html>

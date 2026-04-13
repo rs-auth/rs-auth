@@ -1,4 +1,4 @@
-use crate::error::AuthError;
+use crate::error::{AuthError, OAuthError};
 use crate::oauth::{OAuthProviderConfig, OAuthUserInfo};
 use serde::Deserialize;
 
@@ -15,15 +15,21 @@ pub async fn fetch_user_info(
     access_token: &str,
 ) -> Result<OAuthUserInfo, AuthError> {
     let client = reqwest::Client::new();
-    let resp: GoogleUserResponse = client
+    let response = client
         .get(&config.userinfo_url)
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|e| AuthError::OAuth(e.to_string()))?
+        .map_err(|_| AuthError::OAuth(OAuthError::UserInfoFailed))?;
+
+    if !response.status().is_success() {
+        return Err(AuthError::OAuth(OAuthError::UserInfoFailed));
+    }
+
+    let resp: GoogleUserResponse = response
         .json()
         .await
-        .map_err(|e| AuthError::OAuth(e.to_string()))?;
+        .map_err(|_| AuthError::OAuth(OAuthError::UserInfoMalformed))?;
     Ok(OAuthUserInfo {
         provider_id: "google".to_string(),
         account_id: resp.sub,

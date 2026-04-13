@@ -18,8 +18,8 @@ pub struct SessionsResponse {
     pub sessions: Vec<Session>,
 }
 
-pub async fn get_session<U, S, V, A, E>(
-    State(state): State<AuthState<U, S, V, A, E>>,
+pub async fn get_session<U, S, V, A, O, E>(
+    State(state): State<AuthState<U, S, V, A, O, E>>,
     jar: SignedCookieJar,
 ) -> Result<Json<CurrentSessionResponse>, ApiError>
 where
@@ -27,6 +27,7 @@ where
     S: rs_auth_core::store::SessionStore + Send + Sync + 'static,
     V: rs_auth_core::store::VerificationStore + Send + Sync + 'static,
     A: rs_auth_core::store::AccountStore + Send + Sync + 'static,
+    O: rs_auth_core::store::OAuthStateStore + Send + Sync + 'static,
     E: rs_auth_core::email::EmailSender + Send + Sync + 'static,
 {
     let token = get_session_token(&jar, &state.config.cookie)
@@ -39,8 +40,8 @@ where
     }))
 }
 
-pub async fn list_sessions<U, S, V, A, E>(
-    State(state): State<AuthState<U, S, V, A, E>>,
+pub async fn list_sessions<U, S, V, A, O, E>(
+    State(state): State<AuthState<U, S, V, A, O, E>>,
     jar: SignedCookieJar,
 ) -> Result<Json<SessionsResponse>, ApiError>
 where
@@ -48,6 +49,7 @@ where
     S: rs_auth_core::store::SessionStore + Send + Sync + 'static,
     V: rs_auth_core::store::VerificationStore + Send + Sync + 'static,
     A: rs_auth_core::store::AccountStore + Send + Sync + 'static,
+    O: rs_auth_core::store::OAuthStateStore + Send + Sync + 'static,
     E: rs_auth_core::email::EmailSender + Send + Sync + 'static,
 {
     let token = get_session_token(&jar, &state.config.cookie)

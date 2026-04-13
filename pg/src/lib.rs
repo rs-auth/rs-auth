@@ -6,6 +6,7 @@
 mod account;
 pub mod db;
 pub mod migrate;
+mod oauth_state;
 mod session;
 mod user;
 mod verification;

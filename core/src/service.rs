@@ -5,9 +5,9 @@ use time::OffsetDateTime;
 use crate::config::AuthConfig;
 use crate::crypto::{hash, token};
 use crate::email::EmailSender;
-use crate::error::AuthError;
+use crate::error::{AuthError, OAuthError};
 use crate::oauth::{OAuthTokens, OAuthUserInfo};
-use crate::store::{AccountStore, SessionStore, UserStore, VerificationStore};
+use crate::store::{AccountStore, OAuthStateStore, SessionStore, UserStore, VerificationStore};
 use crate::types::{NewAccount, NewSession, NewUser, NewVerification, Session, User, Verification};
 
 /// Result returned by [`AuthService::signup`].
@@ -69,12 +69,13 @@ pub struct SessionResult {
 }
 
 /// Core authentication service. Generic over storage backends and email sender.
-pub struct AuthService<U, S, V, A, E>
+pub struct AuthService<U, S, V, A, O, E>
 where
     U: UserStore,
     S: SessionStore,
     V: VerificationStore,
     A: AccountStore,
+    O: OAuthStateStore,
     E: EmailSender,
 {
     /// Authentication configuration.
@@ -87,16 +88,19 @@ where
     pub verifications: Arc<V>,
     /// OAuth account storage backend.
     pub accounts: Arc<A>,
+    /// OAuth state storage backend.
+    pub oauth_states: Arc<O>,
     /// Email sender implementation.
     pub email: Arc<E>,
 }
 
-impl<U, S, V, A, E> AuthService<U, S, V, A, E>
+impl<U, S, V, A, O, E> AuthService<U, S, V, A, O, E>
 where
     U: UserStore,
     S: SessionStore,
     V: VerificationStore,
     A: AccountStore,
+    O: OAuthStateStore,
     E: EmailSender,
 {
     /// Create a new authentication service with the given configuration and backends.
@@ -106,6 +110,7 @@ where
         sessions: S,
         verifications: V,
         accounts: A,
+        oauth_states: O,
         email: E,
     ) -> Self {
         Self {
@@ -114,6 +119,7 @@ where
             sessions: Arc::new(sessions),
             verifications: Arc::new(verifications),
             accounts: Arc::new(accounts),
+            oauth_states: Arc::new(oauth_states),
             email: Arc::new(email),
         }
     }
@@ -362,19 +368,23 @@ where
         Ok(ResetPasswordResult { user })
     }
 
-    /// Delete expired sessions and verification tokens. Returns (sessions_deleted, verifications_deleted).
-    pub async fn cleanup_expired(&self) -> Result<(u64, u64), AuthError> {
+    /// Delete expired sessions, verification tokens, and OAuth states.
+    /// Returns (sessions_deleted, verifications_deleted, oauth_states_deleted).
+    pub async fn cleanup_expired(&self) -> Result<(u64, u64, u64), AuthError> {
         let sessions_deleted = self.sessions.delete_expired().await?;
         let verifications_deleted = self.verifications.delete_expired().await?;
-        Ok((sessions_deleted, verifications_deleted))
+        let oauth_states_deleted = self.oauth_states.delete_expired_oauth_states().await?;
+        Ok((
+            sessions_deleted,
+            verifications_deleted,
+            oauth_states_deleted,
+        ))
     }
 
     /// Handle OAuth callback - find or create user from OAuth info.
     ///
     /// NOTE: OAuth state verification happens in the handler layer before calling this method.
-    /// The CSRF state and PKCE verifier are stored in the `verifications` table with the
-    /// identifier format `oauth-state:{csrf_token}`. This reuses existing infrastructure
-    /// rather than requiring a dedicated OAuth state table.
+    /// CSRF state and PKCE verifier are stored in the dedicated `oauth_states` table.
     pub async fn oauth_callback(
         &self,
         info: OAuthUserInfo,
@@ -408,9 +418,7 @@ where
         let user = if let Some(existing_user) = self.users.find_by_email(&info.email).await? {
             // Check if implicit account linking is allowed
             if !self.config.oauth.allow_implicit_account_linking {
-                return Err(AuthError::OAuth(
-                    "Account linking by email is disabled. Please sign in with your password first.".to_string()
-                ));
+                return Err(AuthError::OAuth(OAuthError::LinkingDisabled));
             }
             existing_user
         } else {
@@ -513,11 +521,12 @@ mod tests {
     use super::AuthService;
     use crate::config::AuthConfig;
     use crate::email::EmailSender;
-    use crate::error::AuthError;
+    use crate::error::{AuthError, OAuthError};
     use crate::oauth::OAuthTokens;
-    use crate::store::{AccountStore, SessionStore, UserStore, VerificationStore};
+    use crate::store::{AccountStore, OAuthStateStore, SessionStore, UserStore, VerificationStore};
     use crate::types::{
-        Account, NewAccount, NewSession, NewUser, NewVerification, Session, User, Verification,
+        Account, NewAccount, NewOAuthState, NewSession, NewUser, NewVerification, OAuthState,
+        Session, User, Verification,
     };
 
     #[derive(Default)]
@@ -526,10 +535,12 @@ mod tests {
         next_session_id: i64,
         next_verification_id: i64,
         next_account_id: i64,
+        next_oauth_state_id: i64,
         users: HashMap<i64, User>,
         sessions: HashMap<i64, Session>,
         verifications: HashMap<i64, Verification>,
         accounts: HashMap<i64, Account>,
+        oauth_states: HashMap<i64, OAuthState>,
     }
 
     #[derive(Clone, Default)]
@@ -800,6 +811,55 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl OAuthStateStore for MemoryStore {
+        async fn create_oauth_state(
+            &self,
+            new_state: NewOAuthState,
+        ) -> Result<OAuthState, AuthError> {
+            let mut state = self.inner.lock().unwrap();
+            state.next_oauth_state_id += 1;
+            let now = OffsetDateTime::now_utc();
+            let oauth_state = OAuthState {
+                id: state.next_oauth_state_id,
+                provider_id: new_state.provider_id,
+                csrf_state: new_state.csrf_state,
+                pkce_verifier: new_state.pkce_verifier,
+                expires_at: new_state.expires_at,
+                created_at: now,
+            };
+            state
+                .oauth_states
+                .insert(oauth_state.id, oauth_state.clone());
+            Ok(oauth_state)
+        }
+
+        async fn find_by_csrf_state(
+            &self,
+            csrf_state: &str,
+        ) -> Result<Option<OAuthState>, AuthError> {
+            let state = self.inner.lock().unwrap();
+            Ok(state
+                .oauth_states
+                .values()
+                .find(|s| s.csrf_state == csrf_state)
+                .cloned())
+        }
+
+        async fn delete_oauth_state(&self, id: i64) -> Result<(), AuthError> {
+            self.inner.lock().unwrap().oauth_states.remove(&id);
+            Ok(())
+        }
+
+        async fn delete_expired_oauth_states(&self) -> Result<u64, AuthError> {
+            let now = OffsetDateTime::now_utc();
+            let mut state = self.inner.lock().unwrap();
+            let before = state.oauth_states.len();
+            state.oauth_states.retain(|_, s| s.expires_at >= now);
+            Ok((before - state.oauth_states.len()) as u64)
+        }
+    }
+
     #[derive(Clone, Default)]
     struct TestEmailSender {
         verification_tokens: Arc<Mutex<Vec<String>>>,
@@ -836,6 +896,7 @@ mod tests {
         let email = TestEmailSender::default();
         let service = AuthService::new(
             AuthConfig::default(),
+            store.clone(),
             store.clone(),
             store.clone(),
             store.clone(),
@@ -900,6 +961,7 @@ mod tests {
             store.clone(),
             store.clone(),
             store.clone(),
+            store.clone(),
             email.clone(),
         );
 
@@ -941,6 +1003,7 @@ mod tests {
         let email = TestEmailSender::default();
         let service = AuthService::new(
             AuthConfig::default(),
+            store.clone(),
             store.clone(),
             store.clone(),
             store.clone(),
@@ -996,6 +1059,7 @@ mod tests {
         let email = TestEmailSender::default();
         let service = AuthService::new(
             AuthConfig::default(),
+            store.clone(),
             store.clone(),
             store.clone(),
             store.clone(),
@@ -1063,6 +1127,7 @@ mod tests {
             store.clone(),
             store.clone(),
             store.clone(),
+            store.clone(),
             email.clone(),
         );
 
@@ -1096,10 +1161,55 @@ mod tests {
 
         assert!(result.is_err());
         match result {
-            Err(AuthError::OAuth(msg)) => {
-                assert!(msg.contains("Account linking by email is disabled"));
-            }
-            _ => panic!("Expected OAuth error"),
+            Err(AuthError::OAuth(OAuthError::LinkingDisabled)) => {}
+            _ => panic!("Expected OAuth linking-disabled error"),
         }
+    }
+
+    #[tokio::test]
+    async fn cleanup_expired_removes_sessions_verifications_and_oauth_states() {
+        let store = MemoryStore::default();
+        let email = TestEmailSender::default();
+        let service = AuthService::new(
+            AuthConfig::default(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            email,
+        );
+
+        store
+            .create_session(NewSession {
+                token_hash: "expired-session".to_string(),
+                user_id: 1,
+                expires_at: OffsetDateTime::now_utc() - time::Duration::hours(1),
+                ip_address: None,
+                user_agent: None,
+            })
+            .await
+            .unwrap();
+        store
+            .create_verification(NewVerification {
+                identifier: "email-verify:test@example.com".to_string(),
+                token_hash: "expired-verification".to_string(),
+                expires_at: OffsetDateTime::now_utc() - time::Duration::hours(1),
+            })
+            .await
+            .unwrap();
+        store
+            .create_oauth_state(NewOAuthState {
+                provider_id: "google".to_string(),
+                csrf_state: "expired-oauth-state".to_string(),
+                pkce_verifier: "pkce-verifier".to_string(),
+                expires_at: OffsetDateTime::now_utc() - time::Duration::hours(1),
+            })
+            .await
+            .unwrap();
+
+        let deleted = service.cleanup_expired().await.unwrap();
+
+        assert_eq!(deleted, (1, 1, 1));
     }
 }

@@ -327,10 +327,10 @@ async fn check_verification(session: Session) -> Json<Status> {
 Always use HTTPS for verification links:
 
 ```rust title="example.rs"
-// ❌ Bad
+// Avoid
 format!("http://app.com/verify?token={}", token)
 
-// ✅ Good
+// Prefer
 format!("https://app.com/verify?token={}", token)
 ```
 
@@ -393,7 +393,7 @@ if !user.email_verified && is_sensitive_action {
 ```
 1. User signs up
 2. Account created (email_verified = false)
-3. User automatically signed in ✅
+3. User automatically signed in
 4. Verification email sent
 5. User can use app
 6. User clicks verification link (optional)
@@ -406,11 +406,11 @@ if !user.email_verified && is_sensitive_action {
 1. User signs up
 2. Account created (email_verified = false)
 3. Verification email sent
-4. User tries to log in ❌
+4. User tries to log in
 5. Login blocked: "Please verify your email"
 6. User clicks verification link
 7. Email marked as verified
-8. User can now log in ✅
+8. User can now log in
 ```
 
 ### Gradual Enforcement
@@ -418,13 +418,13 @@ if !user.email_verified && is_sensitive_action {
 ```
 1. User signs up
 2. Account created (email_verified = false)
-3. User automatically signed in ✅
+3. User automatically signed in
 4. User can access basic features
-5. User tries sensitive action ❌
+5. User tries sensitive action
 6. Blocked: "Verify email to continue"
 7. User clicks verification link
 8. Email marked as verified
-9. User can access all features ✅
+9. User can access all features
 ```
 
 Choose the flow that best matches your application's security and UX requirements.

@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 const toneStyles = {
   info: {
     wrapper:
-      "border-sky-500/20 bg-sky-500/8 text-sky-100 dark:border-sky-400/20 dark:bg-sky-400/8",
+      "border-sky-500/20 bg-sky-500/8 dark:text-sky-100 text-sky-500 dark:border-sky-400/20 dark:bg-sky-400/8",
     label: "text-sky-700 dark:text-sky-300",
   },
   warn: {

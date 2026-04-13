@@ -8,8 +8,8 @@ use crate::extract::require_current_user;
 use crate::state::AuthState;
 
 /// Middleware that requires a valid session. Injects `CurrentUser` into request extensions.
-pub async fn require_auth<U, S, V, A, E>(
-    state: AuthState<U, S, V, A, E>,
+pub async fn require_auth<U, S, V, A, O, E>(
+    state: AuthState<U, S, V, A, O, E>,
     jar: SignedCookieJar,
     mut request: Request,
     next: Next,
@@ -19,6 +19,7 @@ where
     S: rs_auth_core::store::SessionStore + Send + Sync + 'static,
     V: rs_auth_core::store::VerificationStore + Send + Sync + 'static,
     A: rs_auth_core::store::AccountStore + Send + Sync + 'static,
+    O: rs_auth_core::store::OAuthStateStore + Send + Sync + 'static,
     E: rs_auth_core::email::EmailSender + Send + Sync + 'static,
 {
     let current_user = require_current_user(&state, &jar).await?;
@@ -27,8 +28,8 @@ where
 }
 
 /// Middleware that requires a valid session with a verified email. Injects `CurrentUser` into request extensions.
-pub async fn require_verified<U, S, V, A, E>(
-    state: AuthState<U, S, V, A, E>,
+pub async fn require_verified<U, S, V, A, O, E>(
+    state: AuthState<U, S, V, A, O, E>,
     jar: SignedCookieJar,
     mut request: Request,
     next: Next,
@@ -38,6 +39,7 @@ where
     S: rs_auth_core::store::SessionStore + Send + Sync + 'static,
     V: rs_auth_core::store::VerificationStore + Send + Sync + 'static,
     A: rs_auth_core::store::AccountStore + Send + Sync + 'static,
+    O: rs_auth_core::store::OAuthStateStore + Send + Sync + 'static,
     E: rs_auth_core::email::EmailSender + Send + Sync + 'static,
 {
     let current_user = require_current_user(&state, &jar).await?;

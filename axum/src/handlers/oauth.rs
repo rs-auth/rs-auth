@@ -5,10 +5,12 @@ use axum_lib::{
     response::{IntoResponse, Redirect, Response},
 };
 use rs_auth_core::AuthError;
+use rs_auth_core::error::OAuthError;
 use rs_auth_core::oauth::{client, github, google, providers};
-use rs_auth_core::types::{NewVerification, PublicUser};
+use rs_auth_core::types::{NewOAuthState, PublicUser};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use tracing::{info, warn};
 
 use crate::cookie::set_session_cookie;
 use crate::error::ApiError;
@@ -26,8 +28,10 @@ pub struct OAuthCallbackResponse {
     pub user: PublicUser,
 }
 
-fn oauth_failure_response<U, S, V, A, E>(
-    state: &AuthState<U, S, V, A, E>,
+fn oauth_failure_response<U, S, V, A, O, E>(
+    state: &AuthState<U, S, V, A, O, E>,
+    provider: &str,
+    phase: &str,
     error: AuthError,
 ) -> Result<Response, ApiError>
 where
@@ -35,8 +39,30 @@ where
     S: rs_auth_core::store::SessionStore + Send + Sync + 'static,
     V: rs_auth_core::store::VerificationStore + Send + Sync + 'static,
     A: rs_auth_core::store::AccountStore + Send + Sync + 'static,
+    O: rs_auth_core::store::OAuthStateStore + Send + Sync + 'static,
     E: rs_auth_core::email::EmailSender + Send + Sync + 'static,
 {
+    let failure_class = match &error {
+        AuthError::OAuth(oauth_error) => match oauth_error {
+            OAuthError::ProviderNotFound { .. } => "provider_not_found",
+            OAuthError::UnsupportedProvider { .. } => "unsupported_provider",
+            OAuthError::Misconfigured { .. } => "misconfigured",
+            OAuthError::InvalidState => "invalid_state",
+            OAuthError::ExchangeFailed => "exchange_failed",
+            OAuthError::UserInfoFailed => "userinfo_failed",
+            OAuthError::UserInfoMalformed => "userinfo_malformed",
+            OAuthError::MissingAccessToken => "missing_access_token",
+            OAuthError::MissingEmail => "missing_email",
+            OAuthError::LinkingDisabled => "linking_disabled",
+        },
+        AuthError::InvalidToken => "invalid_token",
+        AuthError::Store(_) => "store_error",
+        AuthError::Internal(_) => "internal_error",
+        _ => "auth_error",
+    };
+
+    warn!(provider, phase, failure_class, "oauth flow failed");
+
     if let Some(error_url) = &state.config.oauth.error_redirect {
         Ok(Redirect::temporary(error_url).into_response())
     } else {
@@ -44,9 +70,50 @@ where
     }
 }
 
-// OAuth login handler - builds authorization URL and redirects
-pub async fn oauth_login<U, S, V, A, E>(
-    State(state): State<AuthState<U, S, V, A, E>>,
+fn resolve_provider_config(
+    provider: &str,
+    provider_entry: &rs_auth_core::config::OAuthProviderEntry,
+) -> Result<rs_auth_core::oauth::OAuthProviderConfig, AuthError> {
+    match provider {
+        "google" => Ok(providers::google::google_provider(
+            &provider_entry.client_id,
+            &provider_entry.client_secret,
+            &provider_entry.redirect_url,
+            provider_entry.auth_url.as_deref(),
+            provider_entry.token_url.as_deref(),
+            provider_entry.userinfo_url.as_deref(),
+        )),
+        "github" => Ok(providers::github::github_provider(
+            &provider_entry.client_id,
+            &provider_entry.client_secret,
+            &provider_entry.redirect_url,
+            provider_entry.auth_url.as_deref(),
+            provider_entry.token_url.as_deref(),
+            provider_entry.userinfo_url.as_deref(),
+        )),
+        _ => Err(AuthError::OAuth(OAuthError::UnsupportedProvider {
+            provider: provider.to_string(),
+        })),
+    }
+}
+
+fn find_provider_entry<'a>(
+    config: &'a rs_auth_core::config::OAuthConfig,
+    provider: &str,
+) -> Result<&'a rs_auth_core::config::OAuthProviderEntry, AuthError> {
+    config
+        .providers
+        .iter()
+        .find(|p| p.provider_id == provider)
+        .ok_or_else(|| {
+            AuthError::OAuth(OAuthError::ProviderNotFound {
+                provider: provider.to_string(),
+            })
+        })
+}
+
+pub async fn oauth_login<U, S, V, A, O, E>(
+    State(state): State<AuthState<U, S, V, A, O, E>>,
     Path(provider): Path<String>,
 ) -> Result<Response, ApiError>
 where
@@ -54,87 +121,65 @@ where
     S: rs_auth_core::store::SessionStore + Send + Sync + 'static,
     V: rs_auth_core::store::VerificationStore + Send + Sync + 'static,
     A: rs_auth_core::store::AccountStore + Send + Sync + 'static,
+    O: rs_auth_core::store::OAuthStateStore + Send + Sync + 'static,
     E: rs_auth_core::email::EmailSender + Send + Sync + 'static,
 {
-    // 1. Find provider in config
-    let provider_entry = match state
-        .config
-        .oauth
-        .providers
-        .iter()
-        .find(|p| p.provider_id == provider)
-    {
-        Some(entry) => entry,
-        None => {
-            return oauth_failure_response(
-                &state,
-                AuthError::OAuth(format!("Unknown provider: {}", provider)),
-            );
+    if let Err(error) = state.config.oauth.validate() {
+        return oauth_failure_response(&state, &provider, "login.validate_config", error);
+    }
+
+    info!(
+        provider = provider.as_str(),
+        phase = "login.start",
+        "starting oauth login"
+    );
+
+    let provider_entry = match find_provider_entry(&state.config.oauth, &provider) {
+        Ok(entry) => entry,
+        Err(error) => {
+            return oauth_failure_response(&state, &provider, "login.provider_lookup", error);
         }
     };
 
-    // 2. Build provider config
-    let provider_config = match provider.as_str() {
-        "google" => providers::google::google_provider(
-            &provider_entry.client_id,
-            &provider_entry.client_secret,
-            &provider_entry.redirect_url,
-            provider_entry.auth_url.as_deref(),
-            provider_entry.token_url.as_deref(),
-            provider_entry.userinfo_url.as_deref(),
-        ),
-        "github" => providers::github::github_provider(
-            &provider_entry.client_id,
-            &provider_entry.client_secret,
-            &provider_entry.redirect_url,
-            provider_entry.auth_url.as_deref(),
-            provider_entry.token_url.as_deref(),
-            provider_entry.userinfo_url.as_deref(),
-        ),
-        _ => {
-            return oauth_failure_response(
-                &state,
-                AuthError::OAuth(format!("Unsupported provider: {}", provider)),
-            );
+    let provider_config = match resolve_provider_config(&provider, provider_entry) {
+        Ok(config) => config,
+        Err(error) => {
+            return oauth_failure_response(&state, &provider, "login.provider_config", error);
         }
     };
 
-    // 3. Build authorization URL
     let auth = match client::build_authorization(&provider_config) {
         Ok(auth) => auth,
-        Err(error) => return oauth_failure_response(&state, error),
+        Err(error) => {
+            return oauth_failure_response(&state, &provider, "login.authorization", error);
+        }
     };
 
-    // 4. Store state and verifier in verifications table
-    //
-    // NOTE: OAuth state and PKCE verifiers are stored in the `verifications` table
-    // rather than a dedicated `oauth_states` table. The identifier format is
-    // `oauth-state:{csrf_token}` and the token_hash field stores the PKCE verifier.
-    // This approach reuses existing infrastructure. If OAuth grows significantly,
-    // consider migrating to a dedicated table for cleaner separation.
-    //
-    // We store the PKCE verifier in token_hash field (not hashed, we need it back)
-    let identifier = format!("oauth-state:{}", auth.csrf_state);
     if let Err(error) = state
         .service
-        .verifications
-        .create_verification(NewVerification {
-            identifier,
-            token_hash: auth.pkce_verifier, // Store raw verifier
+        .oauth_states
+        .create_oauth_state(NewOAuthState {
+            provider_id: provider.clone(),
+            csrf_state: auth.csrf_state.clone(),
+            pkce_verifier: auth.pkce_verifier,
             expires_at: OffsetDateTime::now_utc() + state.config.verification_ttl,
         })
         .await
     {
-        return oauth_failure_response(&state, error);
+        return oauth_failure_response(&state, &provider, "login.persist_state", error);
     }
 
-    // 5. Redirect to authorization URL
+    info!(
+        provider = provider.as_str(),
+        phase = "login.redirect",
+        "oauth login ready"
+    );
+
     Ok(Redirect::temporary(&auth.authorize_url).into_response())
 }
 
-// OAuth callback handler - exchanges code for token and creates session
-pub async fn oauth_callback<U, S, V, A, E>(
-    State(state): State<AuthState<U, S, V, A, E>>,
+pub async fn oauth_callback<U, S, V, A, O, E>(
+    State(state): State<AuthState<U, S, V, A, O, E>>,
     Path(provider): Path<String>,
     Query(query): Query<OAuthCallbackQuery>,
     jar: SignedCookieJar,
@@ -145,133 +190,135 @@ where
     S: rs_auth_core::store::SessionStore + Send + Sync + 'static,
     V: rs_auth_core::store::VerificationStore + Send + Sync + 'static,
     A: rs_auth_core::store::AccountStore + Send + Sync + 'static,
+    O: rs_auth_core::store::OAuthStateStore + Send + Sync + 'static,
     E: rs_auth_core::email::EmailSender + Send + Sync + 'static,
 {
-    // 1. Look up verification by state
-    let identifier = format!("oauth-state:{}", query.state);
-    let verification = match state
-        .service
-        .verifications
-        .find_by_identifier(&identifier)
-        .await
-    {
-        Ok(Some(verification)) => verification,
-        Ok(None) => return oauth_failure_response(&state, AuthError::InvalidToken),
-        Err(error) => return oauth_failure_response(&state, error),
-    };
-
-    // 2. Validate not expired
-    if verification.expires_at < OffsetDateTime::now_utc() {
-        if let Err(error) = state
-            .service
-            .verifications
-            .delete_verification(verification.id)
-            .await
-        {
-            return oauth_failure_response(&state, error);
-        }
-        return oauth_failure_response(&state, AuthError::InvalidToken);
+    if let Err(error) = state.config.oauth.validate() {
+        return oauth_failure_response(&state, &provider, "callback.validate_config", error);
     }
 
-    // 3. Extract PKCE verifier from token_hash field
-    let pkce_verifier = verification.token_hash.clone();
+    info!(
+        provider = provider.as_str(),
+        phase = "callback.start",
+        "handling oauth callback"
+    );
 
-    // 4. Delete the verification
+    let oauth_state = match state
+        .service
+        .oauth_states
+        .find_by_csrf_state(&query.state)
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return oauth_failure_response(
+                &state,
+                &provider,
+                "callback.load_state",
+                AuthError::OAuth(OAuthError::InvalidState),
+            );
+        }
+        Err(error) => {
+            return oauth_failure_response(&state, &provider, "callback.load_state", error);
+        }
+    };
+
+    if oauth_state.expires_at < OffsetDateTime::now_utc() {
+        let _ = state
+            .service
+            .oauth_states
+            .delete_oauth_state(oauth_state.id)
+            .await;
+        return oauth_failure_response(
+            &state,
+            &provider,
+            "callback.validate_state",
+            AuthError::OAuth(OAuthError::InvalidState),
+        );
+    }
+
+    let pkce_verifier = oauth_state.pkce_verifier.clone();
+
     if let Err(error) = state
         .service
-        .verifications
-        .delete_verification(verification.id)
+        .oauth_states
+        .delete_oauth_state(oauth_state.id)
         .await
     {
-        return oauth_failure_response(&state, error);
+        return oauth_failure_response(&state, &provider, "callback.consume_state", error);
     }
 
-    // 5. Find provider in config
-    let provider_entry = match state
-        .config
-        .oauth
-        .providers
-        .iter()
-        .find(|p| p.provider_id == provider)
-    {
-        Some(entry) => entry,
-        None => {
-            return oauth_failure_response(
-                &state,
-                AuthError::OAuth(format!("Unknown provider: {}", provider)),
-            );
+    let provider_entry = match find_provider_entry(&state.config.oauth, &provider) {
+        Ok(entry) => entry,
+        Err(error) => {
+            return oauth_failure_response(&state, &provider, "callback.provider_lookup", error);
         }
     };
 
-    // 6. Build provider config
-    let provider_config = match provider.as_str() {
-        "google" => providers::google::google_provider(
-            &provider_entry.client_id,
-            &provider_entry.client_secret,
-            &provider_entry.redirect_url,
-            provider_entry.auth_url.as_deref(),
-            provider_entry.token_url.as_deref(),
-            provider_entry.userinfo_url.as_deref(),
-        ),
-        "github" => providers::github::github_provider(
-            &provider_entry.client_id,
-            &provider_entry.client_secret,
-            &provider_entry.redirect_url,
-            provider_entry.auth_url.as_deref(),
-            provider_entry.token_url.as_deref(),
-            provider_entry.userinfo_url.as_deref(),
-        ),
-        _ => {
-            return oauth_failure_response(
-                &state,
-                AuthError::OAuth(format!("Unsupported provider: {}", provider)),
-            );
+    let provider_config = match resolve_provider_config(&provider, provider_entry) {
+        Ok(config) => config,
+        Err(error) => {
+            return oauth_failure_response(&state, &provider, "callback.provider_config", error);
         }
     };
 
-    // 7. Exchange code for tokens
     let tokens = match client::exchange_code(&provider_config, &query.code, &pkce_verifier).await {
         Ok(tokens) => tokens,
-        Err(error) => return oauth_failure_response(&state, error),
+        Err(error) => return oauth_failure_response(&state, &provider, "callback.exchange", error),
     };
 
-    // 8. Fetch user info based on provider
-    // Extract access_token for user info request
     let access_token = match tokens.access_token.as_ref() {
         Some(token) => token,
         None => {
-            return oauth_failure_response(&state, AuthError::OAuth("No access token".to_string()));
+            return oauth_failure_response(
+                &state,
+                &provider,
+                "callback.access_token",
+                AuthError::OAuth(OAuthError::MissingAccessToken),
+            );
         }
     };
 
     let user_info = match provider.as_str() {
         "google" => match google::fetch_user_info(&provider_config, access_token).await {
             Ok(user_info) => user_info,
-            Err(error) => return oauth_failure_response(&state, error),
+            Err(error) => {
+                return oauth_failure_response(&state, &provider, "callback.userinfo", error);
+            }
         },
         "github" => match github::fetch_user_info(&provider_config, access_token).await {
             Ok(user_info) => user_info,
-            Err(error) => return oauth_failure_response(&state, error),
+            Err(error) => {
+                return oauth_failure_response(&state, &provider, "callback.userinfo", error);
+            }
         },
         _ => {
             return oauth_failure_response(
                 &state,
-                AuthError::OAuth(format!("Unsupported provider: {}", provider)),
+                &provider,
+                "callback.userinfo",
+                AuthError::OAuth(OAuthError::UnsupportedProvider {
+                    provider: provider.clone(),
+                }),
             );
         }
     };
 
-    // 10. Call service oauth_callback
     let result = match state
         .service
         .oauth_callback(user_info, tokens, ip, user_agent)
         .await
     {
         Ok(result) => result,
-        Err(error) => return oauth_failure_response(&state, error),
+        Err(error) => return oauth_failure_response(&state, &provider, "callback.service", error),
     };
 
-    // 11. Set session cookie
+    info!(
+        provider = provider.as_str(),
+        phase = "callback.success",
+        "oauth callback completed"
+    );
+
     let jar = set_session_cookie(
         jar,
         &result.session_token,
@@ -279,7 +326,6 @@ where
         state.config.session_ttl,
     );
 
-    // 12. Return redirect or JSON based on config
     if let Some(success_url) = &state.config.oauth.success_redirect {
         Ok((jar, Redirect::temporary(success_url)).into_response())
     } else {

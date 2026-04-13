@@ -16,6 +16,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { name: "docs", href: "/docs" },
+  { name: "changelog", href: "/changelog" },
   {
     name: "github",
     href: "https://github.com/rs-auth/rs-auth",

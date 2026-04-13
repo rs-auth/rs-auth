@@ -3,7 +3,7 @@ title: Google OAuth
 description: Configure Google login in rs-auth.
 ---
 
-Google OAuth is implemented in the current Phase 2 codebase.
+Google OAuth is stable for the current public OAuth surface.
 
 You must configure:
 
@@ -22,7 +22,8 @@ The Axum handler flow:
 
 This flow is covered by service tests and handler tests.
 
-<Callout title="Status" tone="info">
-  Google OAuth is implemented and tested, but the overall OAuth surface should
-  still be treated as early and subject to refinement.
+<Callout title="Stable scope" tone="info">
+  Stable support currently covers Google and GitHub login/callback flows,
+  account creation, implicit linking, session creation, JSON mode, and redirect
+  mode.
 </Callout>

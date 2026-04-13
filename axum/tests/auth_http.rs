@@ -10,9 +10,12 @@ use rs_auth_core::AuthService;
 use rs_auth_core::config::AuthConfig;
 use rs_auth_core::email::EmailSender;
 use rs_auth_core::error::AuthError;
-use rs_auth_core::store::{AccountStore, SessionStore, UserStore, VerificationStore};
+use rs_auth_core::store::{
+    AccountStore, OAuthStateStore, SessionStore, UserStore, VerificationStore,
+};
 use rs_auth_core::types::{
-    Account, NewAccount, NewSession, NewVerification, Session, User, Verification,
+    Account, NewAccount, NewOAuthState, NewSession, NewVerification, OAuthState, Session, User,
+    Verification,
 };
 use time::OffsetDateTime;
 use tower::ServiceExt;
@@ -27,10 +30,12 @@ struct MemoryState {
     next_session_id: i64,
     next_verification_id: i64,
     next_account_id: i64,
+    next_oauth_state_id: i64,
     users: HashMap<i64, User>,
     sessions: HashMap<i64, Session>,
     verifications: HashMap<i64, Verification>,
     accounts: HashMap<i64, Account>,
+    oauth_states: HashMap<i64, OAuthState>,
 }
 
 #[derive(Clone, Default)]
@@ -295,6 +300,51 @@ impl AccountStore for MemoryStore {
     }
 }
 
+#[async_trait]
+impl OAuthStateStore for MemoryStore {
+    async fn create_oauth_state(&self, new_state: NewOAuthState) -> Result<OAuthState, AuthError> {
+        let mut state = self.inner.lock().unwrap();
+        state.next_oauth_state_id += 1;
+        let now = OffsetDateTime::now_utc();
+        let oauth_state = OAuthState {
+            id: state.next_oauth_state_id,
+            provider_id: new_state.provider_id,
+            csrf_state: new_state.csrf_state,
+            pkce_verifier: new_state.pkce_verifier,
+            expires_at: new_state.expires_at,
+            created_at: now,
+        };
+        state
+            .oauth_states
+            .insert(oauth_state.id, oauth_state.clone());
+        Ok(oauth_state)
+    }
+
+    async fn find_by_csrf_state(&self, csrf_state: &str) -> Result<Option<OAuthState>, AuthError> {
+        let state = self.inner.lock().unwrap();
+        Ok(state
+            .oauth_states
+            .values()
+            .find(|oauth_state| oauth_state.csrf_state == csrf_state)
+            .cloned())
+    }
+
+    async fn delete_oauth_state(&self, id: i64) -> Result<(), AuthError> {
+        self.inner.lock().unwrap().oauth_states.remove(&id);
+        Ok(())
+    }
+
+    async fn delete_expired_oauth_states(&self) -> Result<u64, AuthError> {
+        let now = OffsetDateTime::now_utc();
+        let mut state = self.inner.lock().unwrap();
+        let before = state.oauth_states.len();
+        state
+            .oauth_states
+            .retain(|_, oauth_state| oauth_state.expires_at >= now);
+        Ok((before - state.oauth_states.len()) as u64)
+    }
+}
+
 // ============================================================================
 // Test email sender
 // ============================================================================
@@ -343,6 +393,7 @@ fn test_app(store: MemoryStore, email: TestEmailSender) -> axum_lib::Router {
     };
     let service = AuthService::new(
         config,
+        store.clone(),
         store.clone(),
         store.clone(),
         store.clone(),

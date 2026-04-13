@@ -1,0 +1,109 @@
+---
+title: Production OAuth
+description: Production setup guidance for stable Google and GitHub OAuth flows.
+---
+
+rs-auth currently treats Google and GitHub OAuth login as stable for these endpoints:
+
+- `/auth/login/{provider}`
+- `/auth/callback/{provider}`
+
+## Provider setup
+
+For each provider you must configure:
+
+- `provider_id`
+- `client_id`
+- `client_secret`
+- `redirect_url`
+
+Supported stable provider IDs are:
+
+- `google`
+- `github`
+
+Configuration is validated at runtime. Duplicate provider IDs, unsupported providers, empty credentials, and invalid URLs fail fast.
+
+## Redirect URIs
+
+Your provider dashboard redirect URI must exactly match the configured `redirect_url`.
+
+Typical local values:
+
+- `http://localhost:3000/auth/callback/google`
+- `http://localhost:3000/auth/callback/github`
+
+Typical production values:
+
+- `https://app.example.com/auth/callback/google`
+- `https://app.example.com/auth/callback/github`
+
+## HTTPS and proxies
+
+Use HTTPS in production.
+
+If your app runs behind a reverse proxy:
+
+- terminate TLS at the proxy or load balancer
+- preserve the original host and scheme headers
+- make sure the externally visible callback URL matches the configured `redirect_url`
+
+## Cookies
+
+Session cookies are signed and should normally stay:
+
+- `http_only = true`
+- `secure = true`
+- `same_site = Lax`
+
+If you terminate TLS upstream, keep `secure = true` in production.
+
+## Secret management
+
+Keep these values out of source control:
+
+- cookie signing secret
+- OAuth client secrets
+- database credentials
+
+Load them from environment variables or your platform secret store.
+
+## Account linking tradeoffs
+
+Implicit account linking is enabled by default when a provider returns an email that matches an existing user.
+
+This is practical for first-party apps, but stricter environments may want to disable it and require an explicit linking flow outside the current stable surface.
+
+## Stored data
+
+OAuth account data in `accounts` includes:
+
+- `provider_id`
+- provider account ID
+- access token
+- refresh token if supplied
+- access token expiry if supplied
+- granted scope if supplied
+
+Transient OAuth state stores:
+
+- `provider_id`
+- `csrf_state`
+- `pkce_verifier`
+- `expires_at`
+
+OAuth state is one-time-use and cleaned up separately from verification tokens.
+
+## Operational cleanup
+
+Run:
+
+```bash
+rs-auth-cli cleanup --database-url postgres://user:pass@localhost/db
+```
+
+This removes expired:
+
+- sessions
+- verifications
+- OAuth state

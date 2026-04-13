@@ -23,3 +23,4 @@ pub use service::{
     AuthService, LoginResult, RequestResetResult, ResetPasswordResult, SessionResult, SignupResult,
     VerifyEmailResult,
 };
+pub use store::OAuthStateStore;

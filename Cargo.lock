@@ -272,6 +272,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum-extra",
+ "dotenvy",
  "rs-auth",
  "rs-auth-axum",
  "rs-auth-core",
@@ -279,6 +280,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
 ]

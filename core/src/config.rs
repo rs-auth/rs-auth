@@ -1,4 +1,8 @@
+use std::collections::HashSet;
+
 use time::Duration;
+
+use crate::error::{AuthError, OAuthError};
 
 /// Top-level authentication configuration.
 #[derive(Debug, Clone)]
@@ -105,6 +109,83 @@ impl Default for OAuthConfig {
     }
 }
 
+impl OAuthConfig {
+    pub fn validate(&self) -> Result<(), AuthError> {
+        let mut seen_provider_ids = HashSet::new();
+
+        for provider in &self.providers {
+            if !seen_provider_ids.insert(provider.provider_id.as_str()) {
+                return Err(AuthError::OAuth(OAuthError::Misconfigured {
+                    message: format!("duplicate provider_id: {}", provider.provider_id),
+                }));
+            }
+
+            match provider.provider_id.as_str() {
+                "google" | "github" => {}
+                _ => {
+                    return Err(AuthError::OAuth(OAuthError::UnsupportedProvider {
+                        provider: provider.provider_id.clone(),
+                    }));
+                }
+            }
+
+            if provider.client_id.trim().is_empty() {
+                return Err(AuthError::OAuth(OAuthError::Misconfigured {
+                    message: format!("provider {} has empty client_id", provider.provider_id),
+                }));
+            }
+
+            if provider.client_secret.trim().is_empty() {
+                return Err(AuthError::OAuth(OAuthError::Misconfigured {
+                    message: format!("provider {} has empty client_secret", provider.provider_id),
+                }));
+            }
+
+            if provider.redirect_url.trim().is_empty() {
+                return Err(AuthError::OAuth(OAuthError::Misconfigured {
+                    message: format!("provider {} has empty redirect_url", provider.provider_id),
+                }));
+            }
+
+            validate_url(
+                "redirect_url",
+                &provider.provider_id,
+                &provider.redirect_url,
+            )?;
+
+            if let Some(auth_url) = provider.auth_url.as_deref() {
+                validate_url("auth_url", &provider.provider_id, auth_url)?;
+            }
+
+            if let Some(token_url) = provider.token_url.as_deref() {
+                validate_url("token_url", &provider.provider_id, token_url)?;
+            }
+
+            if let Some(userinfo_url) = provider.userinfo_url.as_deref() {
+                validate_url("userinfo_url", &provider.provider_id, userinfo_url)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_url(field: &str, provider_id: &str, value: &str) -> Result<(), AuthError> {
+    if value.trim().is_empty() {
+        return Err(AuthError::OAuth(OAuthError::Misconfigured {
+            message: format!("provider {provider_id} has empty {field}"),
+        }));
+    }
+
+    reqwest::Url::parse(value).map_err(|e| {
+        AuthError::OAuth(OAuthError::Misconfigured {
+            message: format!("provider {provider_id} has invalid {field}: {e}"),
+        })
+    })?;
+
+    Ok(())
+}
+
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
@@ -181,5 +262,70 @@ mod tests {
         );
         assert_eq!(config.cookie.path, "/", "cookie path should be '/'");
         assert_eq!(config.cookie.domain, None, "cookie domain should be None");
+    }
+
+    #[test]
+    fn oauth_config_rejects_duplicate_provider_ids() {
+        let config = OAuthConfig {
+            providers: vec![
+                OAuthProviderEntry {
+                    provider_id: "google".to_string(),
+                    client_id: "a".to_string(),
+                    client_secret: "b".to_string(),
+                    redirect_url: "https://example.com/callback/google".to_string(),
+                    auth_url: None,
+                    token_url: None,
+                    userinfo_url: None,
+                },
+                OAuthProviderEntry {
+                    provider_id: "google".to_string(),
+                    client_id: "c".to_string(),
+                    client_secret: "d".to_string(),
+                    redirect_url: "https://example.com/callback/google-2".to_string(),
+                    auth_url: None,
+                    token_url: None,
+                    userinfo_url: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn oauth_config_rejects_unsupported_provider_ids() {
+        let config = OAuthConfig {
+            providers: vec![OAuthProviderEntry {
+                provider_id: "gitlab".to_string(),
+                client_id: "a".to_string(),
+                client_secret: "b".to_string(),
+                redirect_url: "https://example.com/callback/gitlab".to_string(),
+                auth_url: None,
+                token_url: None,
+                userinfo_url: None,
+            }],
+            ..Default::default()
+        };
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn oauth_config_rejects_invalid_urls() {
+        let config = OAuthConfig {
+            providers: vec![OAuthProviderEntry {
+                provider_id: "google".to_string(),
+                client_id: "a".to_string(),
+                client_secret: "b".to_string(),
+                redirect_url: "not-a-url".to_string(),
+                auth_url: None,
+                token_url: None,
+                userinfo_url: None,
+            }],
+            ..Default::default()
+        };
+
+        assert!(config.validate().is_err());
     }
 }

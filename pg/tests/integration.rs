@@ -50,7 +50,7 @@ impl EmailSender for TestEmailSender {
 /// Returns None if Docker is not available (tests will skip gracefully)
 async fn setup() -> Option<(
     PgPool,
-    AuthService<AuthDb, AuthDb, AuthDb, AuthDb, TestEmailSender>,
+    AuthService<AuthDb, AuthDb, AuthDb, AuthDb, AuthDb, TestEmailSender>,
     testcontainers::ContainerAsync<Postgres>,
 )> {
     let Ok(container) = Postgres::default().start().await else {
@@ -68,6 +68,7 @@ async fn setup() -> Option<(
     let email_sender = TestEmailSender::new();
     let service = AuthService::new(
         AuthConfig::default(),
+        db.clone(),
         db.clone(),
         db.clone(),
         db.clone(),
@@ -335,6 +336,7 @@ async fn test_email_verification_marks_user_verified() {
         db.clone(),
         db.clone(),
         db.clone(),
+        db.clone(),
         email_sender.clone(),
     );
 
@@ -449,6 +451,7 @@ async fn test_reset_password_changes_password_and_revokes_sessions() {
     let email_sender = TestEmailSender::new();
     let service = AuthService::new(
         AuthConfig::default(),
+        db.clone(),
         db.clone(),
         db.clone(),
         db.clone(),
