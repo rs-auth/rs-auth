@@ -21,12 +21,12 @@ export default async function ChangelogPage() {
   let releases: GitHubRelease[] = [];
   try {
     const res = await fetch(
-      "https://api.github.com/repos/rs-auth/rs-auth/releases",
-      {
-        next: { revalidate: 3600 },
-        headers: {
-          Accept: "application/vnd.github.v3+json",
-        },
+        "https://api.github.com/repos/rs-auth/rs-auth/releases",
+        {
+          next: { revalidate: 300 },
+          headers: {
+            Accept: "application/vnd.github.v3+json",
+          },
       },
     );
     if (res.ok) {
