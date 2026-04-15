@@ -6,9 +6,13 @@ use crate::config::AuthConfig;
 use crate::crypto::{hash, token};
 use crate::email::EmailSender;
 use crate::error::{AuthError, OAuthError};
-use crate::oauth::{OAuthTokens, OAuthUserInfo};
+use crate::events::{AuthEvent, LoginFailReason, LoginMethod};
+use crate::hooks::EventEmitter;
+use crate::oauth::{OAuthProviderConfig, OAuthTokens, OAuthUserInfo, client};
 use crate::store::{AccountStore, OAuthStateStore, SessionStore, UserStore, VerificationStore};
-use crate::types::{NewAccount, NewSession, NewUser, NewVerification, Session, User, Verification};
+use crate::types::{
+    NewAccount, NewSession, NewUser, NewVerification, PublicAccount, Session, User, Verification,
+};
 
 /// Result returned by [`AuthService::signup`].
 #[derive(Debug)]
@@ -68,6 +72,26 @@ pub struct SessionResult {
     pub session: Session,
 }
 
+/// Result returned by [`AuthService::link_account`].
+#[derive(Debug)]
+pub struct LinkAccountResult {
+    /// The user whose account was linked.
+    pub user: User,
+}
+
+/// Result returned by [`AuthService::unlink_account`].
+#[derive(Debug, Default)]
+pub struct UnlinkAccountResult {
+    pub _private: (),
+}
+
+/// Result returned by [`AuthService::refresh_oauth_token`].
+#[derive(Debug)]
+pub struct RefreshTokenResult {
+    /// Updated OAuth tokens.
+    pub tokens: OAuthTokens,
+}
+
 /// Core authentication service. Generic over storage backends and email sender.
 pub struct AuthService<U, S, V, A, O, E>
 where
@@ -92,6 +116,8 @@ where
     pub oauth_states: Arc<O>,
     /// Email sender implementation.
     pub email: Arc<E>,
+    /// Event emitter for auth lifecycle hooks.
+    pub events: Arc<EventEmitter>,
 }
 
 impl<U, S, V, A, O, E> AuthService<U, S, V, A, O, E>
@@ -121,7 +147,13 @@ where
             accounts: Arc::new(accounts),
             oauth_states: Arc::new(oauth_states),
             email: Arc::new(email),
+            events: Arc::new(EventEmitter::new()),
         }
+    }
+
+    pub fn with_events(mut self, events: EventEmitter) -> Self {
+        self.events = Arc::new(events);
+        self
     }
 
     /// Register a new user with email and password.
@@ -166,6 +198,13 @@ where
             None
         };
 
+        self.events
+            .emit(AuthEvent::UserSignedUp {
+                user_id: user.id,
+                email: user.email.clone(),
+            })
+            .await;
+
         let (session, session_token) = if self.config.email.auto_sign_in_after_signup {
             let (session, raw_token) = self
                 .create_session_internal(user.id, ip, user_agent)
@@ -202,16 +241,35 @@ where
             .as_deref()
             .ok_or(AuthError::InvalidCredentials)?;
         if !hash::verify_password(password, password_hash)? {
+            self.events
+                .emit(AuthEvent::UserLoginFailed {
+                    email: email.to_string(),
+                    reason: LoginFailReason::InvalidCredentials,
+                })
+                .await;
             return Err(AuthError::InvalidCredentials);
         }
 
         if self.config.email.require_verification_to_login && !user.is_verified() {
+            self.events
+                .emit(AuthEvent::UserLoginFailed {
+                    email: email.to_string(),
+                    reason: LoginFailReason::EmailNotVerified,
+                })
+                .await;
             return Err(AuthError::EmailNotVerified);
         }
 
         let (session, session_token) = self
             .create_session_internal(user.id, ip, user_agent)
             .await?;
+
+        self.events
+            .emit(AuthEvent::UserLoggedIn {
+                user_id: user.id,
+                method: LoginMethod::Password,
+            })
+            .await;
 
         Ok(LoginResult {
             user,
@@ -280,6 +338,10 @@ where
             .delete_verification(verification.id)
             .await?;
 
+        self.events
+            .emit(AuthEvent::EmailVerified { user_id: user.id })
+            .await;
+
         let user = self
             .users
             .find_by_id(user.id)
@@ -323,6 +385,10 @@ where
             self.email
                 .send_password_reset_email(&user, &raw_token)
                 .await?;
+
+            self.events
+                .emit(AuthEvent::PasswordResetRequested { user_id: user.id })
+                .await;
         }
 
         Ok(RequestResetResult::default())
@@ -359,6 +425,10 @@ where
             .delete_verification(verification.id)
             .await?;
 
+        self.events
+            .emit(AuthEvent::PasswordResetCompleted { user_id: user.id })
+            .await;
+
         let user = self
             .users
             .find_by_id(user.id)
@@ -392,13 +462,13 @@ where
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<LoginResult, AuthError> {
+        let oauth_provider_id = info.provider_id.clone();
         // 1. Check if account already exists for this provider
         if let Some(account) = self
             .accounts
             .find_by_provider(&info.provider_id, &info.account_id)
             .await?
         {
-            // Existing account - just create session
             let user = self
                 .users
                 .find_by_id(account.user_id)
@@ -407,6 +477,14 @@ where
             let (session, session_token) = self
                 .create_session_internal(user.id, ip, user_agent)
                 .await?;
+            self.events
+                .emit(AuthEvent::UserLoggedIn {
+                    user_id: user.id,
+                    method: LoginMethod::OAuth {
+                        provider_id: oauth_provider_id,
+                    },
+                })
+                .await;
             return Ok(LoginResult {
                 user,
                 session,
@@ -456,11 +534,152 @@ where
         let (session, session_token) = self
             .create_session_internal(user.id, ip, user_agent)
             .await?;
+        self.events
+            .emit(AuthEvent::UserLoggedIn {
+                user_id: user.id,
+                method: LoginMethod::OAuth {
+                    provider_id: oauth_provider_id,
+                },
+            })
+            .await;
         Ok(LoginResult {
             user,
             session,
             session_token,
         })
+    }
+
+    /// List all OAuth accounts for a user, with sensitive fields removed.
+    pub async fn list_accounts(&self, user_id: i64) -> Result<Vec<PublicAccount>, AuthError> {
+        let accounts = self.accounts.find_by_user_id(user_id).await?;
+        Ok(accounts.into_iter().map(PublicAccount::from).collect())
+    }
+
+    /// Link an OAuth provider account to an existing authenticated user.
+    pub async fn link_account(
+        &self,
+        user_id: i64,
+        info: OAuthUserInfo,
+        tokens: OAuthTokens,
+    ) -> Result<LinkAccountResult, AuthError> {
+        let linked_provider_id = info.provider_id.clone();
+        if let Some(existing) = self
+            .accounts
+            .find_by_provider(&info.provider_id, &info.account_id)
+            .await?
+        {
+            if existing.user_id != user_id {
+                return Err(AuthError::OAuth(OAuthError::AccountAlreadyLinked));
+            }
+            let expires_at = tokens.expires_in.map(|d| OffsetDateTime::now_utc() + d);
+            self.accounts
+                .update_account(
+                    existing.id,
+                    tokens.access_token,
+                    tokens.refresh_token,
+                    expires_at,
+                    tokens.scope,
+                )
+                .await?;
+        } else {
+            let expires_at = tokens.expires_in.map(|d| OffsetDateTime::now_utc() + d);
+            self.accounts
+                .create_account(NewAccount {
+                    user_id,
+                    provider_id: info.provider_id,
+                    account_id: info.account_id,
+                    access_token: tokens.access_token,
+                    refresh_token: tokens.refresh_token,
+                    access_token_expires_at: expires_at,
+                    scope: tokens.scope,
+                })
+                .await?;
+        }
+
+        let user = self
+            .users
+            .find_by_id(user_id)
+            .await?
+            .ok_or(AuthError::UserNotFound)?;
+
+        self.events
+            .emit(AuthEvent::OAuthAccountLinked {
+                user_id,
+                provider_id: linked_provider_id,
+            })
+            .await;
+
+        Ok(LinkAccountResult { user })
+    }
+
+    /// Unlink an OAuth provider account from a user.
+    pub async fn unlink_account(
+        &self,
+        user_id: i64,
+        account_id: i64,
+    ) -> Result<UnlinkAccountResult, AuthError> {
+        let accounts = self.accounts.find_by_user_id(user_id).await?;
+        let target = accounts
+            .iter()
+            .find(|a| a.id == account_id)
+            .ok_or(AuthError::OAuth(OAuthError::AccountNotFound))?;
+
+        let user = self
+            .users
+            .find_by_id(user_id)
+            .await?
+            .ok_or(AuthError::UserNotFound)?;
+
+        if user.password_hash.is_none() && accounts.len() == 1 {
+            return Err(AuthError::OAuth(OAuthError::LastAuthMethod));
+        }
+
+        let unlinked_provider_id = target.provider_id.clone();
+
+        self.accounts.delete_account(target.id).await?;
+
+        self.events
+            .emit(AuthEvent::OAuthAccountUnlinked {
+                user_id,
+                provider_id: unlinked_provider_id,
+            })
+            .await;
+
+        Ok(UnlinkAccountResult::default())
+    }
+
+    /// Refresh an OAuth access token for a specific account.
+    pub async fn refresh_oauth_token(
+        &self,
+        user_id: i64,
+        account_id: i64,
+        provider_config: &OAuthProviderConfig,
+    ) -> Result<RefreshTokenResult, AuthError> {
+        let accounts = self.accounts.find_by_user_id(user_id).await?;
+        let account = accounts
+            .iter()
+            .find(|a| a.id == account_id)
+            .ok_or(AuthError::OAuth(OAuthError::AccountNotFound))?;
+
+        let refresh_token_str = account
+            .refresh_token
+            .as_deref()
+            .ok_or(AuthError::OAuth(OAuthError::NoRefreshToken))?;
+
+        let tokens = client::refresh_access_token(provider_config, refresh_token_str).await?;
+
+        let expires_at = tokens.expires_in.map(|d| OffsetDateTime::now_utc() + d);
+        self.accounts
+            .update_account(
+                account.id,
+                tokens.access_token.clone(),
+                tokens.refresh_token.clone(),
+                expires_at,
+                tokens.scope.clone(),
+            )
+            .await?;
+
+        Ok(RefreshTokenResult { tokens })
     }
 
     async fn create_session_internal(
@@ -476,10 +695,18 @@ where
                 token_hash: token::hash_token(&raw_token),
                 user_id,
                 expires_at: OffsetDateTime::now_utc() + self.config.session_ttl,
-                ip_address: ip,
+                ip_address: ip.clone(),
                 user_agent,
             })
             .await?;
+
+        self.events
+            .emit(AuthEvent::SessionCreated {
+                user_id,
+                session_id: session.id,
+                ip: ip.clone(),
+            })
+            .await;
 
         Ok((session, raw_token))
     }
@@ -522,11 +749,11 @@ mod tests {
     use crate::config::AuthConfig;
     use crate::email::EmailSender;
     use crate::error::{AuthError, OAuthError};
-    use crate::oauth::OAuthTokens;
+    use crate::oauth::{OAuthProviderConfig, OAuthTokens};
     use crate::store::{AccountStore, OAuthStateStore, SessionStore, UserStore, VerificationStore};
     use crate::types::{
-        Account, NewAccount, NewOAuthState, NewSession, NewUser, NewVerification, OAuthState,
-        Session, User, Verification,
+        Account, NewAccount, NewOAuthState, NewSession, NewUser, NewVerification, OAuthIntent,
+        OAuthState, Session, User, Verification,
     };
 
     #[derive(Default)]
@@ -809,6 +1036,27 @@ mod tests {
             self.inner.lock().unwrap().accounts.remove(&id);
             Ok(())
         }
+
+        async fn update_account(
+            &self,
+            id: i64,
+            access_token: Option<String>,
+            refresh_token: Option<String>,
+            access_token_expires_at: Option<OffsetDateTime>,
+            scope: Option<String>,
+        ) -> Result<(), AuthError> {
+            let mut state = self.inner.lock().unwrap();
+            let account = state
+                .accounts
+                .get_mut(&id)
+                .ok_or(AuthError::OAuth(OAuthError::AccountNotFound))?;
+            account.access_token = access_token;
+            account.refresh_token = refresh_token;
+            account.access_token_expires_at = access_token_expires_at;
+            account.scope = scope;
+            account.updated_at = OffsetDateTime::now_utc();
+            Ok(())
+        }
     }
 
     #[async_trait]
@@ -825,6 +1073,8 @@ mod tests {
                 provider_id: new_state.provider_id,
                 csrf_state: new_state.csrf_state,
                 pkce_verifier: new_state.pkce_verifier,
+                intent: new_state.intent,
+                link_user_id: new_state.link_user_id,
                 expires_at: new_state.expires_at,
                 created_at: now,
             };
@@ -1203,6 +1453,8 @@ mod tests {
                 provider_id: "google".to_string(),
                 csrf_state: "expired-oauth-state".to_string(),
                 pkce_verifier: "pkce-verifier".to_string(),
+                intent: OAuthIntent::Login,
+                link_user_id: None,
                 expires_at: OffsetDateTime::now_utc() - time::Duration::hours(1),
             })
             .await
@@ -1211,5 +1463,496 @@ mod tests {
         let deleted = service.cleanup_expired().await.unwrap();
 
         assert_eq!(deleted, (1, 1, 1));
+    }
+
+    #[tokio::test]
+    async fn list_accounts_returns_empty_for_user_with_no_accounts() {
+        let store = MemoryStore::default();
+        let email = TestEmailSender::default();
+        let service = AuthService::new(
+            AuthConfig::default(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            email,
+        );
+
+        let user = store
+            .create_user("test@example.com", Some("Test User"), Some("hash123"))
+            .await
+            .unwrap();
+
+        let accounts = service.list_accounts(user.id).await.unwrap();
+
+        assert!(accounts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_accounts_returns_public_accounts_without_tokens() {
+        let store = MemoryStore::default();
+        let email = TestEmailSender::default();
+        let service = AuthService::new(
+            AuthConfig::default(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            email,
+        );
+
+        let user = store
+            .create_user("test@example.com", Some("Test User"), Some("hash123"))
+            .await
+            .unwrap();
+
+        store
+            .create_account(NewAccount {
+                user_id: user.id,
+                provider_id: "google".to_string(),
+                account_id: "google-123".to_string(),
+                access_token: Some("secret-token".to_string()),
+                refresh_token: Some("refresh-secret".to_string()),
+                access_token_expires_at: None,
+                scope: Some("openid,email".to_string()),
+            })
+            .await
+            .unwrap();
+
+        store
+            .create_account(NewAccount {
+                user_id: user.id,
+                provider_id: "github".to_string(),
+                account_id: "github-456".to_string(),
+                access_token: Some("another-token".to_string()),
+                refresh_token: None,
+                access_token_expires_at: None,
+                scope: None,
+            })
+            .await
+            .unwrap();
+
+        let accounts = service.list_accounts(user.id).await.unwrap();
+
+        assert_eq!(accounts.len(), 2);
+        let provider_ids: Vec<&str> = accounts.iter().map(|a| a.provider_id.as_str()).collect();
+        assert!(provider_ids.contains(&"google"));
+        assert!(provider_ids.contains(&"github"));
+        // Ensure tokens are not leaked
+        assert!(!format!("{:?}", accounts).contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn link_account_creates_account_for_authenticated_user() {
+        let store = MemoryStore::default();
+        let email = TestEmailSender::default();
+        let service = AuthService::new(
+            AuthConfig::default(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            email,
+        );
+
+        let user = store
+            .create_user("test@example.com", Some("Test User"), Some("hash123"))
+            .await
+            .unwrap();
+
+        let oauth_info = crate::oauth::OAuthUserInfo {
+            provider_id: "google".to_string(),
+            account_id: "google-123".to_string(),
+            email: "test@example.com".to_string(),
+            name: None,
+            image: None,
+        };
+
+        let result = service
+            .link_account(user.id, oauth_info, OAuthTokens::default())
+            .await;
+
+        assert!(result.is_ok());
+
+        let accounts = AccountStore::find_by_user_id(&store, user.id)
+            .await
+            .unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].provider_id, "google");
+        assert_eq!(accounts[0].account_id, "google-123");
+    }
+
+    #[tokio::test]
+    async fn link_account_is_idempotent_when_already_linked_to_same_user() {
+        let store = MemoryStore::default();
+        let email = TestEmailSender::default();
+        let service = AuthService::new(
+            AuthConfig::default(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            email,
+        );
+
+        let user = store
+            .create_user("test@example.com", Some("Test User"), Some("hash123"))
+            .await
+            .unwrap();
+
+        store
+            .create_account(NewAccount {
+                user_id: user.id,
+                provider_id: "google".to_string(),
+                account_id: "google-123".to_string(),
+                access_token: Some("old-token".to_string()),
+                refresh_token: Some("old-refresh".to_string()),
+                access_token_expires_at: None,
+                scope: None,
+            })
+            .await
+            .unwrap();
+
+        let oauth_info = crate::oauth::OAuthUserInfo {
+            provider_id: "google".to_string(),
+            account_id: "google-123".to_string(),
+            email: "test@example.com".to_string(),
+            name: None,
+            image: None,
+        };
+
+        let result = service
+            .link_account(user.id, oauth_info, OAuthTokens::default())
+            .await;
+
+        assert!(result.is_ok());
+
+        let accounts = AccountStore::find_by_user_id(&store, user.id)
+            .await
+            .unwrap();
+        assert_eq!(accounts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn link_account_rejects_when_already_linked_to_different_user() {
+        let store = MemoryStore::default();
+        let email = TestEmailSender::default();
+        let service = AuthService::new(
+            AuthConfig::default(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            email,
+        );
+
+        let user_a = store
+            .create_user("usera@example.com", Some("User A"), Some("hash123"))
+            .await
+            .unwrap();
+
+        let user_b = store
+            .create_user("userb@example.com", Some("User B"), Some("hash456"))
+            .await
+            .unwrap();
+
+        store
+            .create_account(NewAccount {
+                user_id: user_a.id,
+                provider_id: "google".to_string(),
+                account_id: "google-123".to_string(),
+                access_token: None,
+                refresh_token: None,
+                access_token_expires_at: None,
+                scope: None,
+            })
+            .await
+            .unwrap();
+
+        let oauth_info = crate::oauth::OAuthUserInfo {
+            provider_id: "google".to_string(),
+            account_id: "google-123".to_string(),
+            email: "userb@example.com".to_string(),
+            name: None,
+            image: None,
+        };
+
+        let result = service
+            .link_account(user_b.id, oauth_info, OAuthTokens::default())
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(AuthError::OAuth(OAuthError::AccountAlreadyLinked)) => {}
+            _ => panic!("Expected AccountAlreadyLinked error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn link_account_updates_existing_account_tokens() {
+        let store = MemoryStore::default();
+        let email = TestEmailSender::default();
+        let service = AuthService::new(
+            AuthConfig::default(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            email,
+        );
+
+        let user = store
+            .create_user("test@example.com", Some("Test User"), Some("hash123"))
+            .await
+            .unwrap();
+
+        store
+            .create_account(NewAccount {
+                user_id: user.id,
+                provider_id: "google".to_string(),
+                account_id: "google-123".to_string(),
+                access_token: Some("old-token".to_string()),
+                refresh_token: Some("old-refresh".to_string()),
+                access_token_expires_at: None,
+                scope: None,
+            })
+            .await
+            .unwrap();
+
+        let oauth_info = crate::oauth::OAuthUserInfo {
+            provider_id: "google".to_string(),
+            account_id: "google-123".to_string(),
+            email: "test@example.com".to_string(),
+            name: None,
+            image: None,
+        };
+
+        let tokens = OAuthTokens {
+            access_token: Some("new-token".to_string()),
+            refresh_token: Some("new-refresh".to_string()),
+            ..Default::default()
+        };
+
+        service
+            .link_account(user.id, oauth_info, tokens)
+            .await
+            .unwrap();
+
+        let accounts = AccountStore::find_by_user_id(&store, user.id)
+            .await
+            .unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].access_token, Some("new-token".to_string()));
+        assert_eq!(accounts[0].refresh_token, Some("new-refresh".to_string()));
+    }
+
+    #[tokio::test]
+    async fn unlink_account_removes_account() {
+        let store = MemoryStore::default();
+        let email = TestEmailSender::default();
+        let service = AuthService::new(
+            AuthConfig::default(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            email,
+        );
+
+        let user = store
+            .create_user("test@example.com", Some("Test User"), Some("password-hash"))
+            .await
+            .unwrap();
+
+        let account1 = store
+            .create_account(NewAccount {
+                user_id: user.id,
+                provider_id: "google".to_string(),
+                account_id: "google-123".to_string(),
+                access_token: None,
+                refresh_token: None,
+                access_token_expires_at: None,
+                scope: None,
+            })
+            .await
+            .unwrap();
+
+        store
+            .create_account(NewAccount {
+                user_id: user.id,
+                provider_id: "github".to_string(),
+                account_id: "github-456".to_string(),
+                access_token: None,
+                refresh_token: None,
+                access_token_expires_at: None,
+                scope: None,
+            })
+            .await
+            .unwrap();
+
+        service.unlink_account(user.id, account1.id).await.unwrap();
+
+        let accounts = AccountStore::find_by_user_id(&store, user.id)
+            .await
+            .unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].provider_id, "github");
+    }
+
+    #[tokio::test]
+    async fn unlink_account_rejects_last_auth_method() {
+        let store = MemoryStore::default();
+        let email = TestEmailSender::default();
+        let service = AuthService::new(
+            AuthConfig::default(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            email,
+        );
+
+        // Create user WITHOUT password hash (OAuth-only user)
+        let user = store
+            .create_user("test@example.com", Some("Test User"), None)
+            .await
+            .unwrap();
+
+        let account = store
+            .create_account(NewAccount {
+                user_id: user.id,
+                provider_id: "google".to_string(),
+                account_id: "google-123".to_string(),
+                access_token: None,
+                refresh_token: None,
+                access_token_expires_at: None,
+                scope: None,
+            })
+            .await
+            .unwrap();
+
+        let result = service.unlink_account(user.id, account.id).await;
+
+        assert!(result.is_err());
+        match result {
+            Err(AuthError::OAuth(OAuthError::LastAuthMethod)) => {}
+            _ => panic!("Expected LastAuthMethod error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_oauth_token_rejects_when_no_refresh_token() {
+        let store = MemoryStore::default();
+        let email = TestEmailSender::default();
+        let service = AuthService::new(
+            AuthConfig::default(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            email,
+        );
+
+        let user = store
+            .create_user("test@example.com", Some("Test User"), None)
+            .await
+            .unwrap();
+
+        let account = store
+            .create_account(NewAccount {
+                user_id: user.id,
+                provider_id: "google".to_string(),
+                account_id: "google-123".to_string(),
+                access_token: Some("old-token".to_string()),
+                refresh_token: None, // No refresh token
+                access_token_expires_at: None,
+                scope: None,
+            })
+            .await
+            .unwrap();
+
+        let provider_config = OAuthProviderConfig {
+            provider_id: "google".to_string(),
+            client_id: "test".to_string(),
+            client_secret: "test".to_string(),
+            auth_url: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
+            token_url: "https://oauth2.googleapis.com/token".to_string(),
+            userinfo_url: "https://www.googleapis.com/oauth2/v2/userinfo".to_string(),
+            redirect_url: "https://localhost/callback".to_string(),
+            scopes: vec!["openid".to_string()],
+        };
+
+        let result = service
+            .refresh_oauth_token(user.id, account.id, &provider_config)
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(AuthError::OAuth(OAuthError::NoRefreshToken)) => {}
+            _ => panic!("Expected NoRefreshToken error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_oauth_token_rejects_for_wrong_account_id() {
+        let store = MemoryStore::default();
+        let email = TestEmailSender::default();
+        let service = AuthService::new(
+            AuthConfig::default(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            email,
+        );
+
+        let user = store
+            .create_user("test@example.com", Some("Test User"), None)
+            .await
+            .unwrap();
+
+        store
+            .create_account(NewAccount {
+                user_id: user.id,
+                provider_id: "google".to_string(),
+                account_id: "google-123".to_string(),
+                access_token: Some("old-token".to_string()),
+                refresh_token: Some("refresh-token".to_string()),
+                access_token_expires_at: None,
+                scope: None,
+            })
+            .await
+            .unwrap();
+
+        let provider_config = OAuthProviderConfig {
+            provider_id: "google".to_string(),
+            client_id: "test".to_string(),
+            client_secret: "test".to_string(),
+            auth_url: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
+            token_url: "https://oauth2.googleapis.com/token".to_string(),
+            userinfo_url: "https://www.googleapis.com/oauth2/v2/userinfo".to_string(),
+            redirect_url: "https://localhost/callback".to_string(),
+            scopes: vec!["openid".to_string()],
+        };
+
+        let result = service
+            .refresh_oauth_token(user.id, 9999, &provider_config)
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(AuthError::OAuth(OAuthError::AccountNotFound)) => {}
+            _ => panic!("Expected AccountNotFound error"),
+        }
     }
 }

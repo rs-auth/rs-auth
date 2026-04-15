@@ -7,7 +7,10 @@
 pub mod config;
 pub mod email;
 pub mod error;
+pub mod events;
+pub mod hooks;
 pub mod oauth;
+pub mod rate_limit;
 pub mod service;
 pub mod store;
 pub mod types;
@@ -19,8 +22,12 @@ pub mod crypto {
 
 pub use config::{AuthConfig, CookieConfig, EmailConfig, SameSite};
 pub use error::AuthError;
+pub use events::{AuthEvent, LoginFailReason, LoginMethod};
+pub use hooks::{AuthHook, EventEmitter};
+pub use rate_limit::{NoOpRateLimiter, RateLimitAction, RateLimiter};
 pub use service::{
-    AuthService, LoginResult, RequestResetResult, ResetPasswordResult, SessionResult, SignupResult,
-    VerifyEmailResult,
+    AuthService, LinkAccountResult, LoginResult, RefreshTokenResult, RequestResetResult,
+    ResetPasswordResult, SessionResult, SignupResult, UnlinkAccountResult, VerifyEmailResult,
 };
 pub use store::OAuthStateStore;
+pub use types::{OAuthIntent, PublicAccount};

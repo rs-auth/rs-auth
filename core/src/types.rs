@@ -146,6 +146,16 @@ pub struct NewVerification {
     pub expires_at: OffsetDateTime,
 }
 
+// ---------- OAuth Intent ----------
+
+/// Whether an OAuth flow is a login or an explicit account link.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OAuthIntent {
+    #[default]
+    Login,
+    Link,
+}
+
 // ---------- Account ----------
 
 /// OAuth account record linking a user to an external provider.
@@ -192,6 +202,36 @@ pub struct NewAccount {
     pub scope: Option<String>,
 }
 
+/// Public account record without sensitive fields like tokens.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicAccount {
+    /// Unique account ID.
+    pub id: i64,
+    /// OAuth provider identifier (e.g., "google", "github").
+    pub provider_id: String,
+    /// Account ID from the OAuth provider.
+    pub account_id: String,
+    /// OAuth scopes granted.
+    pub scopes: Option<Vec<String>>,
+    /// Timestamp when account was created.
+    pub created_at: OffsetDateTime,
+    /// Timestamp when account was last updated.
+    pub updated_at: OffsetDateTime,
+}
+
+impl From<Account> for PublicAccount {
+    fn from(a: Account) -> Self {
+        Self {
+            id: a.id,
+            provider_id: a.provider_id,
+            account_id: a.account_id,
+            scopes: a.scope.map(|s| s.split(',').map(str::to_string).collect()),
+            created_at: a.created_at,
+            updated_at: a.updated_at,
+        }
+    }
+}
+
 // ---------- OAuth State ----------
 
 /// Transient OAuth state record for CSRF protection and PKCE verification.
@@ -205,6 +245,10 @@ pub struct OAuthState {
     pub csrf_state: String,
     /// PKCE verifier for the OAuth code exchange.
     pub pkce_verifier: String,
+    /// Whether this flow is a login or an explicit account link.
+    pub intent: OAuthIntent,
+    /// When intent is Link, the authenticated user's ID to link the account to.
+    pub link_user_id: Option<i64>,
     /// Timestamp when this state expires.
     pub expires_at: OffsetDateTime,
     /// Timestamp when this state was created.
@@ -220,6 +264,10 @@ pub struct NewOAuthState {
     pub csrf_state: String,
     /// PKCE verifier for the OAuth code exchange.
     pub pkce_verifier: String,
+    /// Whether this flow is a login or an explicit account link.
+    pub intent: OAuthIntent,
+    /// When intent is Link, the authenticated user's ID to link the account to.
+    pub link_user_id: Option<i64>,
     /// Timestamp when this state expires.
     pub expires_at: OffsetDateTime,
 }

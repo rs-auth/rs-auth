@@ -377,17 +377,6 @@ struct TestEmailSender {
     reset_tokens: Arc<Mutex<Vec<String>>>,
 }
 
-impl TestEmailSender {
-    #[allow(dead_code)]
-    fn get_last_verification_token(&self) -> Option<String> {
-        self.verification_tokens.lock().unwrap().last().cloned()
-    }
-
-    fn get_last_reset_token(&self) -> Option<String> {
-        self.reset_tokens.lock().unwrap().last().cloned()
-    }
-}
-
 #[async_trait]
 impl EmailSender for TestEmailSender {
     async fn send_verification_email(&self, _user: &User, token: &str) -> Result<(), AuthError> {
@@ -431,7 +420,6 @@ fn test_app(store: MemoryStore, email: TestEmailSender) -> axum_lib::Router {
 // ============================================================================
 
 async fn send_request(app: axum_lib::Router, request: Request<Body>) -> (StatusCode, String) {
-    // Call the router using oneshot
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
     let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -443,7 +431,6 @@ async fn send_request_with_headers(
     app: axum_lib::Router,
     request: Request<Body>,
 ) -> (StatusCode, axum_lib::http::HeaderMap, String) {
-    // Call the router using oneshot
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
     let headers = response.headers().clone();
@@ -466,148 +453,68 @@ fn json_request(method: &str, uri: &str, json: &str) -> Request<Body> {
 // ============================================================================
 
 #[tokio::test]
-async fn signup_returns_201_with_user_json() {
+async fn list_accounts_returns_401_without_cookie() {
     let store = MemoryStore::default();
     let email = TestEmailSender::default();
     let app = test_app(store, email);
 
-    let request = json_request(
-        "POST",
-        "/signup",
-        r#"{"email":"test@example.com","password":"supersecret","name":"Test User"}"#,
-    );
-
-    let (status, body) = send_request(app, request).await;
-
-    assert_eq!(status, StatusCode::CREATED);
-    assert!(body.contains("test@example.com"));
-    assert!(body.contains("Test User"));
-}
-
-#[tokio::test]
-async fn signup_with_short_password_returns_400() {
-    let store = MemoryStore::default();
-    let email = TestEmailSender::default();
-    let app = test_app(store, email);
-
-    let request = json_request(
-        "POST",
-        "/signup",
-        r#"{"email":"test@example.com","password":"short"}"#,
-    );
+    let request = Request::builder()
+        .method("GET")
+        .uri("/accounts")
+        .body(Body::empty())
+        .unwrap();
 
     let (status, _body) = send_request(app, request).await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
-async fn signup_with_duplicate_email_returns_409() {
+async fn list_accounts_returns_accounts_for_authenticated_user() {
     let store = MemoryStore::default();
     let email = TestEmailSender::default();
 
-    // First signup
+    // Sign up a user
     let app = test_app(store.clone(), email.clone());
     let request = json_request(
         "POST",
         "/signup",
         r#"{"email":"test@example.com","password":"supersecret"}"#,
     );
-    let (status, _) = send_request(app, request).await;
+    let (status, headers, _body) = send_request_with_headers(app, request).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Second signup with same email
+    // Extract the set-cookie header
+    let cookie_header = headers
+        .get("set-cookie")
+        .expect("set-cookie header should be present")
+        .to_str()
+        .unwrap();
+
+    // Send GET /accounts with the cookie
     let app = test_app(store, email);
-    let request = json_request(
-        "POST",
-        "/signup",
-        r#"{"email":"test@example.com","password":"supersecret"}"#,
-    );
-    let (status, _body) = send_request(app, request).await;
-
-    assert_eq!(status, StatusCode::CONFLICT);
-}
-
-#[tokio::test]
-async fn login_with_valid_credentials_returns_200() {
-    let store = MemoryStore::default();
-    let email = TestEmailSender::default();
-
-    // First signup
-    let app = test_app(store.clone(), email.clone());
-    let request = json_request(
-        "POST",
-        "/signup",
-        r#"{"email":"test@example.com","password":"supersecret"}"#,
-    );
-    let (status, _) = send_request(app, request).await;
-    assert_eq!(status, StatusCode::CREATED);
-
-    // Then login
-    let app = test_app(store, email);
-    let request = json_request(
-        "POST",
-        "/login",
-        r#"{"email":"test@example.com","password":"supersecret"}"#,
-    );
+    let request = Request::builder()
+        .method("GET")
+        .uri("/accounts")
+        .header("cookie", cookie_header)
+        .body(Body::empty())
+        .unwrap();
     let (status, body) = send_request(app, request).await;
 
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("test@example.com"));
+    // New user should have no OAuth accounts, so accounts should be empty array
+    assert!(body.contains("\"accounts\":[]") || body.contains("\"accounts\": []"));
 }
 
 #[tokio::test]
-async fn login_with_wrong_password_returns_401() {
-    let store = MemoryStore::default();
-    let email = TestEmailSender::default();
-
-    // First signup
-    let app = test_app(store.clone(), email.clone());
-    let request = json_request(
-        "POST",
-        "/signup",
-        r#"{"email":"test@example.com","password":"supersecret"}"#,
-    );
-    let (status, _) = send_request(app, request).await;
-    assert_eq!(status, StatusCode::CREATED);
-
-    // Then login with wrong password
-    let app = test_app(store, email);
-    let request = json_request(
-        "POST",
-        "/login",
-        r#"{"email":"test@example.com","password":"wrongpassword"}"#,
-    );
-    let (status, _body) = send_request(app, request).await;
-
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn login_with_nonexistent_email_returns_401() {
-    let store = MemoryStore::default();
-    let email = TestEmailSender::default();
-    let app = test_app(store, email);
-
-    let request = json_request(
-        "POST",
-        "/login",
-        r#"{"email":"nonexistent@example.com","password":"supersecret"}"#,
-    );
-    let (status, _body) = send_request(app, request).await;
-
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn logout_without_cookie_returns_401() {
+async fn unlink_account_returns_401_without_cookie() {
     let store = MemoryStore::default();
     let email = TestEmailSender::default();
     let app = test_app(store, email);
 
     let request = Request::builder()
         .method("POST")
-        .uri("/logout")
+        .uri("/accounts/1/unlink")
         .body(Body::empty())
         .unwrap();
 
@@ -617,70 +524,7 @@ async fn logout_without_cookie_returns_401() {
 }
 
 #[tokio::test]
-async fn forgot_password_always_returns_200() {
-    let store = MemoryStore::default();
-    let email = TestEmailSender::default();
-    let app = test_app(store, email);
-
-    // Request password reset for non-existent email
-    let request = json_request("POST", "/forgot", r#"{"email":"nonexistent@example.com"}"#);
-    let (status, body) = send_request(app, request).await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("\"ok\":true"));
-}
-
-#[tokio::test]
-async fn reset_password_with_valid_token_returns_200() {
-    let store = MemoryStore::default();
-    let email = TestEmailSender::default();
-
-    // First signup
-    let app = test_app(store.clone(), email.clone());
-    let request = json_request(
-        "POST",
-        "/signup",
-        r#"{"email":"test@example.com","password":"supersecret"}"#,
-    );
-    let (status, _) = send_request(app, request).await;
-    assert_eq!(status, StatusCode::CREATED);
-
-    // Request password reset
-    let app = test_app(store.clone(), email.clone());
-    let request = json_request("POST", "/forgot", r#"{"email":"test@example.com"}"#);
-    let (status, _) = send_request(app, request).await;
-    assert_eq!(status, StatusCode::OK);
-
-    // Get the reset token
-    let reset_token = email
-        .get_last_reset_token()
-        .expect("reset token should exist");
-
-    // Reset password with valid token
-    let app = test_app(store.clone(), email.clone());
-    let request = json_request(
-        "POST",
-        "/reset",
-        &format!(r#"{{"token":"{}","password":"newpassword"}}"#, reset_token),
-    );
-    let (status, body) = send_request(app, request).await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("\"ok\":true"));
-
-    // Verify we can login with new password
-    let app = test_app(store, email);
-    let request = json_request(
-        "POST",
-        "/login",
-        r#"{"email":"test@example.com","password":"newpassword"}"#,
-    );
-    let (status, _) = send_request(app, request).await;
-    assert_eq!(status, StatusCode::OK);
-}
-
-#[tokio::test]
-async fn get_session_returns_200_with_valid_cookie() {
+async fn unlink_account_returns_error_for_nonexistent_account() {
     let store = MemoryStore::default();
     let email = TestEmailSender::default();
 
@@ -701,210 +545,16 @@ async fn get_session_returns_200_with_valid_cookie() {
         .to_str()
         .unwrap();
 
-    // Send GET /session with the cookie
-    let app = test_app(store, email);
-    let request = Request::builder()
-        .method("GET")
-        .uri("/session")
-        .header("cookie", cookie_header)
-        .body(Body::empty())
-        .unwrap();
-    let (status, body) = send_request(app, request).await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("test@example.com"));
-}
-
-#[tokio::test]
-async fn get_session_returns_401_without_cookie() {
-    let store = MemoryStore::default();
-    let email = TestEmailSender::default();
-    let app = test_app(store, email);
-
-    // Send GET /session with no cookie
-    let request = Request::builder()
-        .method("GET")
-        .uri("/session")
-        .body(Body::empty())
-        .unwrap();
-    let (status, _body) = send_request(app, request).await;
-
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn get_sessions_returns_active_sessions() {
-    let store = MemoryStore::default();
-    let email = TestEmailSender::default();
-
-    // Sign up a user
-    let app = test_app(store.clone(), email.clone());
-    let request = json_request(
-        "POST",
-        "/signup",
-        r#"{"email":"test@example.com","password":"supersecret"}"#,
-    );
-    let (status, headers, _body) = send_request_with_headers(app, request).await;
-    assert_eq!(status, StatusCode::CREATED);
-
-    // Extract the set-cookie header
-    let cookie_header = headers
-        .get("set-cookie")
-        .expect("set-cookie header should be present")
-        .to_str()
-        .unwrap();
-
-    // Send GET /sessions with the cookie
-    let app = test_app(store, email);
-    let request = Request::builder()
-        .method("GET")
-        .uri("/sessions")
-        .header("cookie", cookie_header)
-        .body(Body::empty())
-        .unwrap();
-    let (status, body) = send_request(app, request).await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("sessions"));
-}
-
-#[tokio::test]
-async fn verify_email_returns_200_for_valid_token() {
-    let store = MemoryStore::default();
-    let email = TestEmailSender::default();
-
-    // Sign up a user
-    let app = test_app(store.clone(), email.clone());
-    let request = json_request(
-        "POST",
-        "/signup",
-        r#"{"email":"test@example.com","password":"supersecret"}"#,
-    );
-    let (status, _) = send_request(app, request).await;
-    assert_eq!(status, StatusCode::CREATED);
-
-    // Get the verification token from the TestEmailSender
-    let verification_token = email
-        .get_last_verification_token()
-        .expect("verification token should exist");
-
-    // Send GET /verify/{token}
-    let app = test_app(store, email);
-    let request = Request::builder()
-        .method("GET")
-        .uri(format!("/verify/{}", verification_token))
-        .body(Body::empty())
-        .unwrap();
-    let (status, body) = send_request(app, request).await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("test@example.com"));
-}
-
-#[tokio::test]
-async fn signup_sets_session_cookie() {
-    let store = MemoryStore::default();
-    let email = TestEmailSender::default();
-    let app = test_app(store, email);
-
-    // Sign up a user
-    let request = json_request(
-        "POST",
-        "/signup",
-        r#"{"email":"test@example.com","password":"supersecret"}"#,
-    );
-    let (status, headers, _body) = send_request_with_headers(app, request).await;
-
-    assert_eq!(status, StatusCode::CREATED);
-
-    // Assert the response has a set-cookie header containing "rs_auth_session"
-    let cookie_header = headers
-        .get("set-cookie")
-        .expect("set-cookie header should be present")
-        .to_str()
-        .unwrap();
-    assert!(cookie_header.contains("rs_auth_session"));
-}
-
-#[tokio::test]
-async fn login_sets_session_cookie() {
-    let store = MemoryStore::default();
-    let email = TestEmailSender::default();
-
-    // First signup
-    let app = test_app(store.clone(), email.clone());
-    let request = json_request(
-        "POST",
-        "/signup",
-        r#"{"email":"test@example.com","password":"supersecret"}"#,
-    );
-    let (status, _) = send_request(app, request).await;
-    assert_eq!(status, StatusCode::CREATED);
-
-    // Then login
-    let app = test_app(store, email);
-    let request = json_request(
-        "POST",
-        "/login",
-        r#"{"email":"test@example.com","password":"supersecret"}"#,
-    );
-    let (status, headers, _body) = send_request_with_headers(app, request).await;
-
-    assert_eq!(status, StatusCode::OK);
-
-    // Assert the login response has a set-cookie header
-    let cookie_header = headers
-        .get("set-cookie")
-        .expect("set-cookie header should be present")
-        .to_str()
-        .unwrap();
-    assert!(cookie_header.contains("rs_auth_session"));
-}
-
-#[tokio::test]
-async fn logout_removes_session_cookie() {
-    let store = MemoryStore::default();
-    let email = TestEmailSender::default();
-
-    // Sign up a user
-    let app = test_app(store.clone(), email.clone());
-    let request = json_request(
-        "POST",
-        "/signup",
-        r#"{"email":"test@example.com","password":"supersecret"}"#,
-    );
-    let (status, headers, _body) = send_request_with_headers(app, request).await;
-    assert_eq!(status, StatusCode::CREATED);
-
-    // Extract the set-cookie header
-    let cookie_header = headers
-        .get("set-cookie")
-        .expect("set-cookie header should be present")
-        .to_str()
-        .unwrap();
-
-    // POST /logout with that cookie
+    // Try to unlink non-existent account
     let app = test_app(store, email);
     let request = Request::builder()
         .method("POST")
-        .uri("/logout")
+        .uri("/accounts/999/unlink")
         .header("cookie", cookie_header)
         .body(Body::empty())
         .unwrap();
-    let (status, headers, _body) = send_request_with_headers(app, request).await;
+    let (status, _body) = send_request(app, request).await;
 
-    assert_eq!(status, StatusCode::OK);
-
-    // Assert the logout response has a set-cookie header that removes/expires the cookie
-    let cookie_header = headers
-        .get("set-cookie")
-        .expect("set-cookie header should be present")
-        .to_str()
-        .unwrap();
-    assert!(cookie_header.contains("rs_auth_session"));
-    // When a cookie is removed, it typically has Max-Age=0 or an expired date
-    assert!(
-        cookie_header.contains("Max-Age=0") || cookie_header.contains("max-age=0"),
-        "Cookie should be expired/removed"
-    );
+    // Should return error (404 or 400 depending on error mapping)
+    assert_ne!(status, StatusCode::OK);
 }

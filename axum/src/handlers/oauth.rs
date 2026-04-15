@@ -7,14 +7,14 @@ use axum_lib::{
 use rs_auth_core::AuthError;
 use rs_auth_core::error::OAuthError;
 use rs_auth_core::oauth::{client, github, google, providers};
-use rs_auth_core::types::{NewOAuthState, PublicUser};
+use rs_auth_core::types::{NewOAuthState, OAuthIntent, PublicUser};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tracing::{info, warn};
 
 use crate::cookie::set_session_cookie;
 use crate::error::ApiError;
-use crate::extract::ClientInfo;
+use crate::extract::{ClientInfo, CurrentUser};
 use crate::state::AuthState;
 
 #[derive(Debug, Deserialize)]
@@ -54,6 +54,11 @@ where
             OAuthError::MissingAccessToken => "missing_access_token",
             OAuthError::MissingEmail => "missing_email",
             OAuthError::LinkingDisabled => "linking_disabled",
+            OAuthError::AccountNotFound => "account_not_found",
+            OAuthError::LastAuthMethod => "last_auth_method",
+            OAuthError::AccountAlreadyLinked => "account_already_linked",
+            OAuthError::RefreshFailed => "refresh_failed",
+            OAuthError::NoRefreshToken => "no_refresh_token",
         },
         AuthError::InvalidToken => "invalid_token",
         AuthError::Store(_) => "store_error",
@@ -162,6 +167,8 @@ where
             provider_id: provider.clone(),
             csrf_state: auth.csrf_state.clone(),
             pkce_verifier: auth.pkce_verifier,
+            intent: OAuthIntent::Login,
+            link_user_id: None,
             expires_at: OffsetDateTime::now_utc() + state.config.verification_ttl,
         })
         .await
@@ -173,6 +180,77 @@ where
         provider = provider.as_str(),
         phase = "login.redirect",
         "oauth login ready"
+    );
+
+    Ok(Redirect::temporary(&auth.authorize_url).into_response())
+}
+
+pub async fn oauth_link<U, S, V, A, O, E>(
+    State(state): State<AuthState<U, S, V, A, O, E>>,
+    Path(provider): Path<String>,
+    CurrentUser { user, .. }: CurrentUser,
+) -> Result<Response, ApiError>
+where
+    U: rs_auth_core::store::UserStore + Send + Sync + 'static,
+    S: rs_auth_core::store::SessionStore + Send + Sync + 'static,
+    V: rs_auth_core::store::VerificationStore + Send + Sync + 'static,
+    A: rs_auth_core::store::AccountStore + Send + Sync + 'static,
+    O: rs_auth_core::store::OAuthStateStore + Send + Sync + 'static,
+    E: rs_auth_core::email::EmailSender + Send + Sync + 'static,
+{
+    if let Err(error) = state.config.oauth.validate() {
+        return oauth_failure_response(&state, &provider, "link.validate_config", error);
+    }
+
+    info!(
+        provider = provider.as_str(),
+        user_id = user.id,
+        phase = "link.start",
+        "starting oauth account link"
+    );
+
+    let provider_entry = match find_provider_entry(&state.config.oauth, &provider) {
+        Ok(entry) => entry,
+        Err(error) => {
+            return oauth_failure_response(&state, &provider, "link.provider_lookup", error);
+        }
+    };
+
+    let provider_config = match resolve_provider_config(&provider, provider_entry) {
+        Ok(config) => config,
+        Err(error) => {
+            return oauth_failure_response(&state, &provider, "link.provider_config", error);
+        }
+    };
+
+    let auth = match client::build_authorization(&provider_config) {
+        Ok(auth) => auth,
+        Err(error) => {
+            return oauth_failure_response(&state, &provider, "link.authorization", error);
+        }
+    };
+
+    if let Err(error) = state
+        .service
+        .oauth_states
+        .create_oauth_state(NewOAuthState {
+            provider_id: provider.clone(),
+            csrf_state: auth.csrf_state.clone(),
+            pkce_verifier: auth.pkce_verifier,
+            intent: OAuthIntent::Link,
+            link_user_id: Some(user.id),
+            expires_at: OffsetDateTime::now_utc() + state.config.verification_ttl,
+        })
+        .await
+    {
+        return oauth_failure_response(&state, &provider, "link.persist_state", error);
+    }
+
+    info!(
+        provider = provider.as_str(),
+        user_id = user.id,
+        phase = "link.redirect",
+        "oauth link ready"
     );
 
     Ok(Redirect::temporary(&auth.authorize_url).into_response())
@@ -238,6 +316,8 @@ where
     }
 
     let pkce_verifier = oauth_state.pkce_verifier.clone();
+    let intent = oauth_state.intent;
+    let link_user_id = oauth_state.link_user_id;
 
     if let Err(error) = state
         .service
@@ -303,6 +383,34 @@ where
             );
         }
     };
+
+    if intent == OAuthIntent::Link {
+        let link_user_id =
+            link_user_id.ok_or(ApiError(AuthError::OAuth(OAuthError::InvalidState)))?;
+
+        match state
+            .service
+            .link_account(link_user_id, user_info, tokens)
+            .await
+        {
+            Ok(_) => {}
+            Err(error) => {
+                return oauth_failure_response(&state, &provider, "callback.link", error);
+            }
+        };
+
+        info!(
+            provider = provider.as_str(),
+            user_id = link_user_id,
+            phase = "callback.link_success",
+            "oauth account linked"
+        );
+
+        if let Some(success_url) = &state.config.oauth.success_redirect {
+            return Ok(Redirect::temporary(success_url).into_response());
+        }
+        return Ok(Json(serde_json::json!({"linked": true})).into_response());
+    }
 
     let result = match state
         .service

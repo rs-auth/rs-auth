@@ -3,6 +3,7 @@ use rs_auth_core::error::AuthError;
 use rs_auth_core::store::AccountStore;
 use rs_auth_core::types::{Account, NewAccount};
 use sqlx::Row;
+use time::OffsetDateTime;
 
 use crate::db::AuthDb;
 
@@ -110,6 +111,33 @@ impl AccountStore for AuthDb {
             .execute(&self.pool)
             .await
             .map_err(|e| AuthError::Store(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn update_account(
+        &self,
+        id: i64,
+        access_token: Option<String>,
+        refresh_token: Option<String>,
+        access_token_expires_at: Option<OffsetDateTime>,
+        scope: Option<String>,
+    ) -> Result<(), AuthError> {
+        sqlx::query(
+            r#"
+            UPDATE accounts
+            SET access_token = $2, refresh_token = $3,
+                access_token_expires_at = $4, scope = $5, updated_at = now()
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .bind(access_token)
+        .bind(refresh_token)
+        .bind(access_token_expires_at)
+        .bind(scope)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AuthError::Store(e.to_string()))?;
         Ok(())
     }
 }

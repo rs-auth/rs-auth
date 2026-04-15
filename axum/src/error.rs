@@ -51,6 +51,23 @@ impl IntoResponse for ApiError {
                 rs_auth_core::error::OAuthError::LinkingDisabled => {
                     (StatusCode::BAD_REQUEST, "oauth account linking is disabled")
                 }
+                rs_auth_core::error::OAuthError::AccountNotFound => {
+                    (StatusCode::NOT_FOUND, "account not found")
+                }
+                rs_auth_core::error::OAuthError::LastAuthMethod => (
+                    StatusCode::BAD_REQUEST,
+                    "cannot unlink last authentication method",
+                ),
+                rs_auth_core::error::OAuthError::AccountAlreadyLinked => (
+                    StatusCode::CONFLICT,
+                    "account already linked to a different user",
+                ),
+                rs_auth_core::error::OAuthError::RefreshFailed => {
+                    (StatusCode::BAD_GATEWAY, "oauth token refresh failed")
+                }
+                rs_auth_core::error::OAuthError::NoRefreshToken => {
+                    (StatusCode::BAD_REQUEST, "no refresh token available")
+                }
             },
             AuthError::Hash(_) | AuthError::Store(_) | AuthError::Internal(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal error")

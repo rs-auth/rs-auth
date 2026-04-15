@@ -1,6 +1,6 @@
 use oauth2::{
     AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointNotSet, EndpointSet,
-    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, TokenUrl,
+    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl,
     basic::BasicClient,
 };
 
@@ -72,6 +72,47 @@ pub async fn exchange_code(
         .and_then(|d| time::Duration::try_from(d).ok());
 
     // Extract scopes and join them into a single string
+    let scope = token_response.scopes().map(|scopes| {
+        scopes
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    });
+
+    Ok(OAuthTokens {
+        access_token: Some(access_token),
+        refresh_token,
+        expires_in,
+        scope,
+    })
+}
+
+/// Refresh an access token using a stored refresh token.
+pub async fn refresh_access_token(
+    config: &OAuthProviderConfig,
+    refresh_token_str: &str,
+) -> Result<OAuthTokens, AuthError> {
+    let client = build_client(config)?;
+
+    let http_client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| AuthError::OAuth(OAuthError::RefreshFailed))?;
+
+    let token_response = client
+        .exchange_refresh_token(&RefreshToken::new(refresh_token_str.to_string()))
+        .request_async(&http_client)
+        .await
+        .map_err(|_| AuthError::OAuth(OAuthError::RefreshFailed))?;
+
+    let access_token = token_response.access_token().secret().clone();
+    let refresh_token = token_response.refresh_token().map(|t| t.secret().clone());
+
+    let expires_in = token_response
+        .expires_in()
+        .and_then(|d| time::Duration::try_from(d).ok());
+
     let scope = token_response.scopes().map(|scopes| {
         scopes
             .iter()

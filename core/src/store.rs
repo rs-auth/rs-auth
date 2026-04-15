@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use time::OffsetDateTime;
 
 use crate::error::AuthError;
 use crate::types::{
@@ -75,6 +76,14 @@ pub trait AccountStore: Send + Sync {
     ) -> Result<Option<Account>, AuthError>;
     async fn find_by_user_id(&self, user_id: i64) -> Result<Vec<Account>, AuthError>;
     async fn delete_account(&self, id: i64) -> Result<(), AuthError>;
+    async fn update_account(
+        &self,
+        id: i64,
+        access_token: Option<String>,
+        refresh_token: Option<String>,
+        access_token_expires_at: Option<OffsetDateTime>,
+        scope: Option<String>,
+    ) -> Result<(), AuthError>;
 }
 
 /// Storage backend for transient OAuth state records.

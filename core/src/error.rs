@@ -31,6 +31,21 @@ pub enum OAuthError {
 
     #[error("account linking by email is disabled")]
     LinkingDisabled,
+
+    #[error("account not found")]
+    AccountNotFound,
+
+    #[error("cannot unlink last authentication method")]
+    LastAuthMethod,
+
+    #[error("account already linked to a different user")]
+    AccountAlreadyLinked,
+
+    #[error("token refresh failed")]
+    RefreshFailed,
+
+    #[error("no refresh token available")]
+    NoRefreshToken,
 }
 
 /// Authentication error types.

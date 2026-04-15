@@ -19,8 +19,8 @@ use rs_auth_core::store::{
     AccountStore, OAuthStateStore, SessionStore, UserStore, VerificationStore,
 };
 use rs_auth_core::types::{
-    Account, NewAccount, NewOAuthState, NewSession, NewVerification, OAuthState, Session, User,
-    Verification,
+    Account, NewAccount, NewOAuthState, NewSession, NewVerification, OAuthIntent, OAuthState,
+    Session, User, Verification,
 };
 use serde_json::json;
 use time::OffsetDateTime;
@@ -304,6 +304,26 @@ impl AccountStore for MemoryStore {
         self.inner.lock().unwrap().accounts.remove(&id);
         Ok(())
     }
+
+    async fn update_account(
+        &self,
+        id: i64,
+        access_token: Option<String>,
+        refresh_token: Option<String>,
+        access_token_expires_at: Option<OffsetDateTime>,
+        scope: Option<String>,
+    ) -> Result<(), AuthError> {
+        let mut state = self.inner.lock().unwrap();
+        let account = state.accounts.get_mut(&id).ok_or(AuthError::OAuth(
+            rs_auth_core::error::OAuthError::AccountNotFound,
+        ))?;
+        account.access_token = access_token;
+        account.refresh_token = refresh_token;
+        account.access_token_expires_at = access_token_expires_at;
+        account.scope = scope;
+        account.updated_at = OffsetDateTime::now_utc();
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -317,6 +337,8 @@ impl OAuthStateStore for MemoryStore {
             provider_id: new_state.provider_id,
             csrf_state: new_state.csrf_state,
             pkce_verifier: new_state.pkce_verifier,
+            intent: new_state.intent,
+            link_user_id: new_state.link_user_id,
             expires_at: new_state.expires_at,
             created_at: now,
         };
@@ -736,6 +758,8 @@ async fn oauth_callback_expired_state_returns_error() {
             provider_id: "google".to_string(),
             csrf_state: "test-state-123".to_string(),
             pkce_verifier: "test-pkce-verifier".to_string(),
+            intent: OAuthIntent::Login,
+            link_user_id: None,
             expires_at: OffsetDateTime::now_utc() - time::Duration::hours(1),
         })
         .await
@@ -779,6 +803,8 @@ async fn oauth_callback_valid_state_fails_at_exchange() {
             provider_id: "google".to_string(),
             csrf_state: "valid-state".to_string(),
             pkce_verifier: "test-pkce-verifier".to_string(),
+            intent: OAuthIntent::Login,
+            link_user_id: None,
             expires_at: OffsetDateTime::now_utc() + time::Duration::hours(1),
         })
         .await
@@ -870,6 +896,8 @@ async fn oauth_callback_success_returns_json_and_sets_cookie() {
             provider_id: "google".to_string(),
             csrf_state: "success-state".to_string(),
             pkce_verifier: "pkce-verifier".to_string(),
+            intent: OAuthIntent::Login,
+            link_user_id: None,
             expires_at: OffsetDateTime::now_utc() + time::Duration::hours(1),
         })
         .await
@@ -904,6 +932,8 @@ async fn oauth_callback_replay_fails_after_successful_callback() {
             provider_id: "google".to_string(),
             csrf_state: "replay-state".to_string(),
             pkce_verifier: "pkce-verifier".to_string(),
+            intent: OAuthIntent::Login,
+            link_user_id: None,
             expires_at: OffsetDateTime::now_utc() + time::Duration::hours(1),
         })
         .await
@@ -940,6 +970,8 @@ async fn oauth_callback_success_redirects_when_configured() {
             provider_id: "google".to_string(),
             csrf_state: "success-redirect-state".to_string(),
             pkce_verifier: "pkce-verifier".to_string(),
+            intent: OAuthIntent::Login,
+            link_user_id: None,
             expires_at: OffsetDateTime::now_utc() + time::Duration::hours(1),
         })
         .await
@@ -1031,6 +1063,8 @@ async fn oauth_callback_malformed_userinfo_returns_error() {
             provider_id: "google".to_string(),
             csrf_state: "malformed-userinfo-state".to_string(),
             pkce_verifier: "pkce-verifier".to_string(),
+            intent: OAuthIntent::Login,
+            link_user_id: None,
             expires_at: OffsetDateTime::now_utc() + time::Duration::hours(1),
         })
         .await

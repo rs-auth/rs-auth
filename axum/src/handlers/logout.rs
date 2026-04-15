@@ -2,8 +2,9 @@ use axum_extra::extract::SignedCookieJar;
 use axum_lib::{Json, extract::State};
 use serde::Serialize;
 
-use crate::cookie::{get_session_token, remove_session_cookie};
+use crate::cookie::remove_session_cookie;
 use crate::error::ApiError;
+use crate::extract::CurrentUser;
 use crate::state::AuthState;
 
 #[derive(Debug, Serialize)]
@@ -13,6 +14,7 @@ pub struct LogoutResponse {
 
 pub async fn logout<U, S, V, A, O, E>(
     State(state): State<AuthState<U, S, V, A, O, E>>,
+    CurrentUser { session, .. }: CurrentUser,
     jar: SignedCookieJar,
 ) -> Result<(SignedCookieJar, Json<LogoutResponse>), ApiError>
 where
@@ -23,10 +25,7 @@ where
     O: rs_auth_core::store::OAuthStateStore + Send + Sync + 'static,
     E: rs_auth_core::email::EmailSender + Send + Sync + 'static,
 {
-    let token = get_session_token(&jar, &state.config.cookie)
-        .ok_or(ApiError(rs_auth_core::AuthError::SessionNotFound))?;
-    let current = state.service.get_session(&token).await?;
-    state.service.logout(current.session.id).await?;
+    state.service.logout(session.id).await?;
 
     Ok((
         remove_session_cookie(jar, &state.config.cookie),
