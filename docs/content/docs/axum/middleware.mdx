@@ -3,9 +3,72 @@ title: Middleware
 description: Protect routes with auth-aware middleware.
 ---
 
-The Axum integration includes middleware patterns for:
+The Axum integration provides middleware for protecting routes that require authentication.
 
-- requiring an authenticated user
-- requiring a verified user
+## Public vs protected routes
 
-This keeps access control close to routing while leaving the auth logic inside the core service layer.
+The `auth_router` is split into two groups:
+
+- **Public routes**: Accessible without authentication (signup, login, OAuth flows)
+- **Protected routes**: Require valid session (`require_auth` middleware)
+
+Protected routes include:
+
+- `/auth/session` - Get current session
+- `/auth/sessions` - List all sessions
+- `/auth/logout` - Log out and invalidate session
+- `/auth/accounts` - List linked OAuth accounts
+- `/auth/accounts/{id}/unlink` - Unlink OAuth account
+- `/auth/link/{provider}` - Initiate explicit OAuth linking
+
+## require_auth middleware
+
+The `require_auth` middleware:
+
+- Validates the session cookie
+- Resolves the user and session from the database
+- Injects `CurrentUser` into request extensions
+- Returns 401 if no valid session exists
+
+It's applied to the protected router group:
+
+```rust
+let protected = Router::new()
+    .route("/session", get(handlers::session::get_session))
+    .route("/sessions", get(handlers::session::list_sessions))
+    .route("/logout", post(handlers::logout::logout))
+    // ... more protected routes
+    .layer(middleware::from_fn_with_state(
+        state.clone(),
+        crate::middleware::require_auth,
+    ));
+```
+
+## CurrentUser extractor
+
+The `CurrentUser` extractor retrieves the user information injected by `require_auth`:
+
+```rust
+use rs_auth_axum::extract::CurrentUser;
+
+async fn my_handler(
+    CurrentUser { user, session }: CurrentUser,
+) -> Json<serde_json::Value> {
+    Json(json!({ "user_id": user.id, "session_id": session.id }))
+}
+```
+
+## require_verified middleware
+
+For routes that require a verified email address, use `require_verified`:
+
+```rust
+let verified_only = Router::new()
+    .route("/protected", get(handlers::protected_route))
+    .layer(middleware::from_fn_with_state(
+        state.clone(),
+        crate::middleware::require_verified,
+    ));
+```
+
+This middleware enforces that `user.email_verified_at` is not `None`.

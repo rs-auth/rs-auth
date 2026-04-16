@@ -2,6 +2,7 @@
   "title": "Concepts",
   "pages": [
     "sessions",
-    "email-verification"
+    "email-verification",
+    "events-hooks"
   ]
 }

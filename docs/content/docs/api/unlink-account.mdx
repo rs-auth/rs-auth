@@ -1,0 +1,49 @@
+---
+title: Unlink Account
+description: Remove an OAuth provider account from the current user.
+---
+
+# Unlink Account
+
+Removes an OAuth provider account link from the currently authenticated user.
+
+## Endpoint
+
+```
+POST /auth/accounts/{id}/unlink
+```
+
+This is a protected route that requires an active session.
+
+## Request
+
+The account ID is passed as a path parameter. No request body is required.
+
+## Response
+
+Returns a JSON object on success:
+
+```json
+{
+  "success": true
+}
+```
+
+On success, the server returns HTTP 204 No Content.
+
+## Behavior
+
+- The OAuth provider link is removed from the user's account
+- The account record is deleted from the database
+
+<Callout title="Last auth method protection" tone="warn">
+  Unlinking the last remaining authentication method is not allowed. This ensures users cannot lock themselves out of their accounts.
+</Callout>
+
+## Errors
+
+| Status | Description |
+|--------|-------------|
+| 400    | Cannot unlink last auth method (would lock out user) |
+| 401    | No active session or invalid session |
+| 404    | Account not found or does not belong to current user |

@@ -57,6 +57,10 @@ This gives you:
   Postgres so the first release stays cohesive.
 </Callout>
 
+## Protected routes
+
+Protected routes use the `require_auth` middleware and the `CurrentUser` extractor. The middleware validates the session cookie and injects user information into request extensions, allowing handlers to depend on authenticated state. For details, see the [Middleware](/docs/axum/middleware) documentation.
+
 ## Suggested next reads
 
 - [Sessions](/docs/concepts/sessions)

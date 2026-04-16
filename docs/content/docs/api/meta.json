@@ -7,6 +7,9 @@
     "verify-email",
     "reset-password",
     "session",
-    "sessions"
+    "sessions",
+    "list-accounts",
+    "unlink-account",
+    "link-provider"
   ]
 }

@@ -3,13 +3,25 @@ title: Account Linking
 description: How rs-auth links OAuth identities to users.
 ---
 
-Current account linking behavior:
+## Implicit linking
+
+Current account linking behavior during login:
 
 1. if a provider account already exists, login succeeds immediately
 2. otherwise, if the provider email matches an existing user and implicit linking is allowed, rs-auth links the account
 3. otherwise, a new user and account are created
 
 This is the stable default behavior for the current OAuth surface.
+
+## Explicit linking
+
+You can also initiate explicit account linking through the `/auth/link/{provider}` endpoint:
+
+- Requires an active authenticated session
+- Redirects to the OAuth provider's authorization page
+- On callback, attaches the OAuth account to the current user (does not create a new session)
+
+Use explicit linking when you want users to connect additional OAuth providers to their existing account, such as in user settings or account management flows.
 
 <Callout title="Future direction" tone="warn">
   If you need stricter account-linking rules, plan for provider trust policies

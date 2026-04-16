@@ -4,12 +4,6 @@
 
 Composable authentication for Rust, inspired by Better Auth. The `rs-auth` facade crate re-exports `rs-auth-core`, `rs-auth-postgres`, and `rs-auth-axum` for convenient access to the authentication stack.
 
-## Current Status
-
-**Phase 1 (Email/Password Authentication)** is complete and production-ready.
-
-**Phase 2 (OAuth)** is available for stable Google and GitHub login and callback flows.
-
 ## Features
 
 - Email/password signup and login
@@ -22,6 +16,11 @@ Composable authentication for Rust, inspired by Better Auth. The `rs-auth` facad
 - Auto sign-in after signup
 - CLI for migrations and cleanup
 - OAuth login and callback for Google and GitHub
+- OAuth account link/unlink/list endpoints
+- Auth events & hooks (EventEmitter)
+- RateLimiter trait
+- Token refresh service method
+- Release automation (cargo-release + GitHub Actions)
 
 ## Workspace Layout
 
@@ -102,6 +101,10 @@ async fn me(
 }
 ```
 
+Protected routes should use the `require_auth` middleware and `CurrentUser` extractor, which automatically validates sessions and injects user context into request extensions.
+
+````
+
 ## Configuration
 
 The `AuthConfig` struct controls authentication behavior:
@@ -117,7 +120,7 @@ pub struct AuthConfig {
     pub cookie: CookieConfig,
     pub oauth: OAuthConfig,
 }
-```
+````
 
 ### EmailConfig
 
@@ -229,30 +232,53 @@ OAuth transient state is stored separately from verification tokens. Each record
 
 This keeps email/reset verification tokens isolated from OAuth login state and allows operational cleanup to handle both flows independently.
 
-Out of scope for the current OAuth milestone:
+## Events & Hooks
 
-- additional providers
-- token refresh workflows
-- unlinking accounts
-- admin tooling
-- provider management UX
+rs-auth provides an event system for observing authentication operations through the `EventEmitter` and `AuthHook` trait.
+
+Configure events with `service.with_events(emitter)`:
+
+```rust
+use rs_auth_core::{AuthService, hooks::{AuthHook, EventEmitter}, events::AuthEvent};
+
+struct LoggingHook;
+
+#[async_trait::async_trait]
+impl AuthHook for LoggingHook {
+    async fn on_event(&self, event: &AuthEvent) -> Result<(), rs_auth_core::AuthError> {
+        tracing::info!("Auth event: {:?}", event);
+        Ok(())
+    }
+}
+
+let mut emitter = EventEmitter::new();
+emitter.add_hook(Box::new(LoggingHook));
+
+let auth_service = AuthService::new(config, db, db, db, db, db, LogEmailSender)
+    .with_events(emitter);
+```
+
+Hook failures are non-fatal — they log a warning but do not interrupt the auth operation.
 
 ## API Endpoints
 
 The `auth_router` provides the following endpoints:
 
-| Method | Path                      | Description                          |
-|--------|---------------------------|--------------------------------------|
-| POST   | `/auth/signup`            | Create a new user account            |
-| POST   | `/auth/login`             | Log in with email and password       |
-| POST   | `/auth/logout`            | Log out and invalidate session       |
-| GET    | `/auth/session`           | Get current session information      |
-| GET    | `/auth/sessions`          | List all sessions for current user   |
-| GET    | `/auth/verify/{token}`    | Verify email with token              |
-| POST   | `/auth/forgot`            | Request password reset               |
-| POST   | `/auth/reset`             | Reset password with token            |
-| GET    | `/auth/login/{provider}`  | Initiate OAuth login                 |
-| GET    | `/auth/callback/{provider}` | OAuth callback handler               |
+| Method | Path                         | Description                                          |
+| ------ | ---------------------------- | ---------------------------------------------------- |
+| POST   | `/auth/signup`               | Create a new user account                            |
+| POST   | `/auth/login`                | Log in with email and password                       |
+| POST   | `/auth/logout`               | Log out and invalidate session                       |
+| GET    | `/auth/session`              | Get current session information                      |
+| GET    | `/auth/sessions`             | List all sessions for current user                   |
+| GET    | `/auth/verify/{token}`       | Verify email with token                              |
+| POST   | `/auth/forgot`               | Request password reset                               |
+| POST   | `/auth/reset`                | Reset password with token                            |
+| GET    | `/auth/login/{provider}`     | Initiate OAuth login                                 |
+| GET    | `/auth/callback/{provider}`  | OAuth callback handler                               |
+| GET    | `/auth/link/{provider}`      | Initiate explicit OAuth account link (requires auth) |
+| GET    | `/auth/accounts`             | List linked provider accounts (requires auth)        |
+| POST   | `/auth/accounts/{id}/unlink` | Unlink a provider account (requires auth)            |
 
 ## License
 

@@ -3,13 +3,68 @@ title: Extractors
 description: Access the current user and session from Axum handlers.
 ---
 
-The Axum crate provides extractors for authenticated and optional user resolution.
+The Axum integration provides extractors for accessing authentication state in your handlers.
 
-These work by:
+## CurrentUser
 
-- reading the signed session cookie
-- resolving the raw token
-- hashing it
-- loading the session and user from storage
+The `CurrentUser` extractor requires a valid session. Use it on protected routes (those guarded by `require_auth` middleware):
 
-Use them when you want route handlers to depend on current-user state without reimplementing the session lookup flow.
+```rust
+use rs_auth_axum::extract::CurrentUser;
+
+async fn profile_handler(
+    CurrentUser { user, session }: CurrentUser,
+) -> Json<serde_json::Value> {
+    Json(json!({
+        "user_id": user.id,
+        "email": user.email,
+        "session_id": session.id,
+    }))
+}
+```
+
+If no valid session exists, `CurrentUser` returns a 401 error.
+
+## OptionalUser
+
+The `OptionalUser` extractor always succeeds, returning `None` when the user is not authenticated:
+
+```rust
+use rs_auth_axum::extract::OptionalUser;
+
+async fn public_handler(
+    OptionalUser { user, session }: OptionalUser,
+) -> Json<serde_json::Value> {
+    match user {
+        Some(u) => Json(json!({ "message": "Hello, {}!", u.email })),
+        None => Json(json!({ "message": "Hello, anonymous!" })),
+    }
+}
+```
+
+Use `OptionalUser` when you want to provide different behavior for authenticated vs anonymous users.
+
+## ClientInfo
+
+The `ClientInfo` extractor provides information about the requesting client:
+
+```rust
+use rs_auth_axum::extract::ClientInfo;
+
+async fn audit_handler(
+    ClientInfo { ip, user_agent }: ClientInfo,
+) {
+    tracing::info!(
+        ip = ?ip,
+        user_agent = ?user_agent,
+        "Request received"
+    );
+}
+```
+
+`ClientInfo` derives:
+
+- `ip`: Client IP address from `X-Forwarded-For` or `X-Real-IP` headers
+- `user_agent`: User-Agent header value
+
+This is useful for security auditing, rate limiting, and tracking login locations.

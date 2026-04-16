@@ -1,0 +1,54 @@
+---
+title: List Accounts
+description: Get all linked OAuth provider accounts for the current user.
+---
+
+# List Accounts
+
+Retrieves all OAuth provider accounts linked to the currently authenticated user.
+
+## Endpoint
+
+```
+GET /auth/accounts
+```
+
+This is a protected route that requires an active session.
+
+## Request
+
+No request body is required. The session cookie must be present.
+
+## Response
+
+Returns a JSON object with an `accounts` array containing `PublicAccount` objects:
+
+```json
+{
+  "accounts": [
+    {
+      "provider_id": "github",
+      "account_id": "12345",
+      "scopes": ["user:email"],
+      "created_at": "2026-04-16T12:00:00Z",
+      "updated_at": "2026-04-16T12:00:00Z"
+    }
+  ]
+}
+```
+
+Each account includes:
+
+- `provider_id` - The OAuth provider (e.g., "github", "google")
+- `account_id` - The provider's account ID
+- `scopes` - Array of granted OAuth scopes
+- `created_at` - When the account was linked
+- `updated_at` - When the account was last updated
+
+Note that access tokens and refresh tokens are not included in the response for security reasons.
+
+## Errors
+
+| Status | Description |
+|--------|-------------|
+| 401    | No active session or invalid session |

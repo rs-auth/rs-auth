@@ -1,0 +1,157 @@
+---
+title: Events & Hooks
+description: Observe and react to authentication operations with the event system.
+---
+
+# Events & Hooks
+
+rs-auth provides an event system for observing authentication operations through the `EventEmitter` and `AuthHook` trait.
+
+## AuthEvent
+
+The `AuthEvent` enum represents all authentication events:
+
+- `UserSignedUp` - A new user account was created
+- `UserLoggedIn` - User logged in successfully (includes login method)
+- `UserLoginFailed` - Login attempt failed (includes reason)
+- `UserLoggedOut` - User logged out
+- `EmailVerified` - User's email was verified
+- `PasswordResetRequested` - User requested a password reset
+- `PasswordResetCompleted` - User completed password reset
+- `OAuthAccountLinked` - OAuth provider account was linked
+- `OAuthAccountUnlinked` - OAuth provider account was unlinked
+- `SessionCreated` - A new session was created
+- `SessionRevoked` - A session was revoked
+
+## AuthHook
+
+The `AuthHook` trait allows you to respond to authentication events:
+
+```rust
+use rs_auth_core::{hooks::AuthHook, events::AuthEvent, error::AuthError};
+
+#[async_trait::async_trait]
+pub trait AuthHook: Send + Sync {
+    async fn on_event(&self, event: &AuthEvent) -> Result<(), AuthError> {
+        // Default implementation does nothing
+        Ok(())
+    }
+}
+```
+
+## EventEmitter
+
+`EventEmitter` manages multiple hooks and dispatches events to them:
+
+```rust
+use rs_auth_core::hooks::EventEmitter;
+
+let mut emitter = EventEmitter::new();
+emitter.add_hook(Box::new(MyLoggingHook));
+emitter.add_hook(Box::new(MyAnalyticsHook));
+```
+
+## Usage with AuthService
+
+Configure events on the service:
+
+```rust
+use rs_auth_core::{AuthService, hooks::{AuthHook, EventEmitter}};
+
+let mut emitter = EventEmitter::new();
+emitter.add_hook(Box::new(LoggingHook));
+
+let auth_service = AuthService::new(config, db, db, db, db, db, email_sender)
+    .with_events(emitter);
+```
+
+## Example: Logging Hook
+
+```rust
+use tracing::info;
+
+struct LoggingHook;
+
+#[async_trait::async_trait]
+impl AuthHook for LoggingHook {
+    async fn on_event(&self, event: &AuthEvent) -> Result<(), AuthError> {
+        match event {
+            AuthEvent::UserLoggedIn { user_id, method } => {
+                info!(user_id = %user_id, method = ?method, "User logged in");
+            }
+            AuthEvent::UserLoginFailed { email, reason } => {
+                info!(email = %email, reason = ?reason, "Login failed");
+            }
+            _ => info!(event = ?event, "Auth event"),
+        }
+        Ok(())
+    }
+}
+```
+
+## Example: Analytics Hook
+
+```rust
+use serde_json::json;
+
+struct AnalyticsHook {
+    analytics_client: AnalyticsClient,
+}
+
+#[async_trait::async_trait]
+impl AuthHook for AnalyticsHook {
+    async fn on_event(&self, event: &AuthEvent) -> Result<(), AuthError> {
+        let payload = json!({
+            "event": format!("{:?}", event),
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        });
+
+        // Fire-and-forget - errors don't fail auth operations
+        let _ = self.analytics_client.track(payload).await;
+
+        Ok(())
+    }
+}
+```
+
+## Error handling
+
+Hook failures are **non-fatal**. If a hook returns an error, `EventEmitter` logs a warning but continues executing the auth operation:
+
+```rust
+pub async fn emit(&self, event: AuthEvent) {
+    for hook in &self.hooks {
+        if let Err(e) = hook.on_event(&event).await {
+            warn!(error = %e, "auth hook error");
+        }
+    }
+}
+```
+
+This ensures that monitoring or analytics failures don't prevent users from authenticating.
+
+## RateLimiter
+
+The `RateLimiter` trait provides a way to implement rate limiting for authentication operations:
+
+```rust
+use rs_auth_core::rate_limit::{RateLimiter, RateLimitAction};
+
+#[async_trait]
+pub trait RateLimiter: Send + Sync {
+    async fn check(&self, action: RateLimitAction, key: &str) -> Result<(), AuthError>;
+}
+```
+
+Supported rate limit actions include:
+
+- `Signup` - Account creation
+- `Login` - Login attempts
+- `PasswordReset` - Password reset requests
+- `OAuthCallback` - OAuth callback processing
+
+Rate limiting is typically implemented at the middleware level or as a service-level check before performing the protected operation.
+
+<Callout title="No-op default" tone="info">
+  rs-auth provides a `NoOpRateLimiter` implementation that allows all operations. Implement your own rate limiter to add protection against brute-force attacks and abuse.
+</Callout>

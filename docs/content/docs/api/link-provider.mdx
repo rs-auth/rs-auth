@@ -1,0 +1,64 @@
+---
+title: Link Provider
+description: Initiate explicit OAuth account linking for an authenticated user.
+---
+
+# Link Provider
+
+Initiates an explicit OAuth account linking flow for the currently authenticated user.
+
+## Endpoint
+
+```
+GET /auth/link/{provider}
+```
+
+This is a protected route that requires an active session.
+
+## How it works
+
+1. The endpoint redirects to the OAuth provider's authorization page
+2. The provider handles authentication and consent
+3. On callback, the OAuth account is linked to the current user (not creating a new session)
+4. The user is redirected back to your application
+
+## Difference from `/auth/login/{provider}`
+
+The `/auth/login/{provider}` endpoint creates a new session and may create a new user account. In contrast, `/auth/link/{provider}`:
+
+- **Requires** an existing authenticated session
+- **Attaches** the OAuth provider to the current user
+- **Does not** create a new session
+
+<Callout title="Authentication required" tone="warn">
+  This endpoint requires an active session. Unauthenticated requests should be redirected to login or return a 401 error depending on your application's mode.
+</Callout>
+
+## Supported providers
+
+- `google`
+- `github`
+
+## Configuration
+
+The provider must be configured in `OAuthConfig` with the appropriate `client_id`, `client_secret`, and `redirect_url`.
+
+The redirect URL for linking must match the callback URL configured for your OAuth app, typically:
+
+```
+http://localhost:3000/auth/callback/{provider}
+```
+
+or in production:
+
+```
+https://app.example.com/auth/callback/{provider}
+```
+
+## Use cases
+
+Explicit linking is useful when:
+
+- Users can have multiple authentication methods (password + OAuth, or multiple OAuth providers)
+- You want users to link additional OAuth providers to an existing account
+- You want to provide a dedicated "connect your account" flow in user settings

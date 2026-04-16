@@ -11,7 +11,7 @@ This guide will walk you through adding rs-auth to your Rust project.
 
 Before installing rs-auth, ensure you have:
 
-- Rust 1.70 or later
+- Rust 1.85 or later
 - PostgreSQL 14 or later
 - Cargo installed
 
@@ -22,7 +22,7 @@ Add rs-auth to your `Cargo.toml`:
 ```toml title="Cargo.toml"
 [dependencies]
 rs-auth = "0.1"
-axum = "0.7"
+axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls"] }
 ```
@@ -34,7 +34,7 @@ rs-auth requires several dependencies to function:
 ### Web Framework
 
 ```toml title="Cargo.toml"
-axum = "0.7"
+axum = "0.8"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
 ```

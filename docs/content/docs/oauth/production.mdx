@@ -74,6 +74,8 @@ Implicit account linking is enabled by default when a provider returns an email 
 
 This is practical for first-party apps, but stricter environments may want to disable it and require an explicit linking flow outside the current stable surface.
 
+Explicit linking through `/auth/link/{provider}` provides more control: users must already be authenticated, and the OAuth account is attached to their existing session without creating a new one. This is useful for multi-factor authentication strategies or when you want to give users control over which providers they link to their account.
+
 ## Stored data
 
 OAuth account data in `accounts` includes:
@@ -90,6 +92,8 @@ Transient OAuth state stores:
 - `provider_id`
 - `csrf_state`
 - `pkce_verifier`
+- `intent` - distinguishes login flows from explicit linking flows
+- `link_user_id` - user ID when linking to an existing account
 - `expires_at`
 
 OAuth state is one-time-use and cleaned up separately from verification tokens.
